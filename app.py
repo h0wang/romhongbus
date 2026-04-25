@@ -18,7 +18,7 @@ app = Flask(__name__)
 app.template_folder = "templates"
 
 # ── Data Cache ────────────────────────────────────────────────────────────────
-DATA_DIR = "/home/clawpi/.openclaw/data"
+DATA_DIR = "/home/clawpi/.openclaw/data/ohlcv"
 CACHE_FRESHNESS = {  # max age before re-fetch (days)
     "daily":   1,
     "weekly":  7,
@@ -246,8 +246,8 @@ def chart_data_more():
 
 
 # ── Watchlist API ────────────────────────────────────────────────────────────
-WATCHLIST_PATH = "/home/clawpi/.openclaw/workspace/watchlist.json"
-PORTFOLIO_DIR  = "/home/clawpi/.openclaw/workspace"
+WATCHLIST_PATH = "/home/clawpi/.openclaw/data/watchlist/watchlist.json"
+PORTFOLIO_DIR  = "/home/clawpi/.openclaw/data/portfolios"
 
 @app.route("/api/watchlist")
 def api_watchlist():

@@ -37,7 +37,7 @@ def client():
 def tmp_data_dir(monkeypatch):
     """Patch DATA_DIR to a temporary directory for isolation."""
     with tempfile.TemporaryDirectory() as tmpdir:
-        monkeypatch.setattr("app.DATA_DIR", tmpdir)
+        monkeypatch.setattr("app.DATA_DIR", tmpdir + "/ohlcv")
         yield tmpdir
 
 

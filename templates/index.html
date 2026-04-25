@@ -261,6 +261,9 @@ let activeTf      = 'daily';
 let activeTicker  = null;
 let portfolioData = null;       // loaded portfolio data
 let currentXRange = null;       // tracks current xaxis range for wheel zoom
+let isLoading     = false;      // true while loadMoreData is in flight
+let dataLoadedFrom = null;      // oldest timestamp in currentData
+let dataLoadedTo   = null;      // newest timestamp in currentData
 
 // ── Portfolio overlay helpers ──────────────────────────────────────────────
 var chartDiv = document.getElementById('chart');
@@ -328,6 +331,18 @@ function setStatus(msg, ok) {
   el.className = 'status' + (ok ? ' ok' : '');
 }
 
+// Count bars currently visible in the chart window (0 means show all)
+function getVisibleCount(d) {
+  if (!currentXRange || !d || !d.dates) return d.dates ? d.dates.length : 0;
+  const [r0, r1] = currentXRange;
+  let n = 0;
+  for (let i = 0; i < d.dates.length; i++) {
+    const t = +new Date(d.dates[i]);
+    if (t >= r0 && t <= r1) n++;
+  }
+  return n;
+}
+
 // ── Settings ─────────────────────────────────────────────────────────────────
 function getSettings() {
   return {
@@ -376,15 +391,20 @@ function loadChart() {
       currentData = d;
       currentData.loaded_from = d.loaded_from || d.dates[0];
       currentData.loaded_to   = d.loaded_to   || d.dates[d.dates.length - 1];
+      dataLoadedFrom = +new Date(currentData.dates[0]);
+      dataLoadedTo   = +new Date(currentData.dates[currentData.dates.length - 1]);
       renderChart(d, true);
-      setStatus(d.ticker + ' · ' + d.tf + ' · ' + d.dates.length + ' bars', true);
+      setStatus(d.ticker + ' · ' + d.tf + ' · ' + d.dates.length + ' loaded · ' + getVisibleCount(d) + ' shown', true);
     })
     .catch(e => setStatus('Fetch error: ' + e.message));
 }
 
 
 // ── Load More Data (on-demand historical append) ────────────────────────────
-async function loadMoreData(ticker, tf, visibleLeftEdge) {
+// direction: -1 = prepend older data (left), +1 = append newer data (right)
+async function loadMoreData(ticker, tf, direction) {
+  if (isLoading) return;
+  isLoading = true;
   try {
     setStatus('Loading more…');
     const moreResp = await fetch(`/api/chart_data/more?ticker=${encodeURIComponent(ticker)}&tf=${tf}`);
@@ -392,46 +412,70 @@ async function loadMoreData(ticker, tf, visibleLeftEdge) {
     const more = await moreResp.json();
     if (more.error) throw new Error(more.error);
 
-    // Find bars in more[] that are genuinely older than our current oldest
-    const curOldestTs = +new Date(currentData.dates[0]);
-    const newIndices = [];
-    for (let i = 0; i < more.dates.length; i++) {
-      if (+new Date(more.dates[i]) < curOldestTs - 86400000) {
-        newIndices.push(i);
+    if (direction === -1) {
+      // ── Prepend older data (left side) ────────────────────────────────────
+      const curOldestTs = +new Date(currentData.dates[0]);
+      const newIndices = [];
+      for (let i = 0; i < more.dates.length; i++) {
+        if (+new Date(more.dates[i]) < curOldestTs - 86400000) {
+          newIndices.push(i);
+        }
       }
+      if (newIndices.length === 0) {
+        currentData.loaded_from = null;
+        isLoading = false;
+        return;
+      }
+      const keys = ['dates','opens','highs','lows','closes','volumes',
+        'ema_a','ema_b','sma_a','sma_b','sma_c','sma_d',
+        'bb_up','bb_mid','bb_low','rsi','macd_line','macd_signal','macd_hist'];
+      keys.forEach(k => {
+        if (!more[k] || !currentData[k]) return;
+        currentData[k] = newIndices.map(i => more[k][i]).concat(currentData[k]);
+      });
+      currentData.loaded_from = currentData.dates[0];
+      dataLoadedFrom = +new Date(currentData.dates[0]);
+    } else {
+      // ── Append newer data (right side) ─────────────────────────────────────
+      const curNewestTs = +new Date(currentData.dates[currentData.dates.length - 1]);
+      const newIndices = [];
+      for (let i = 0; i < more.dates.length; i++) {
+        if (+new Date(more.dates[i]) > curNewestTs + 86400000) {
+          newIndices.push(i);
+        }
+      }
+      if (newIndices.length === 0) {
+        currentData.loaded_to = null;
+        isLoading = false;
+        return;
+      }
+      const keys = ['dates','opens','highs','lows','closes','volumes',
+        'ema_a','ema_b','sma_a','sma_b','sma_c','sma_d',
+        'bb_up','bb_mid','bb_low','rsi','macd_line','macd_signal','macd_hist'];
+      keys.forEach(k => {
+        if (!more[k] || !currentData[k]) return;
+        currentData[k] = currentData[k].concat(newIndices.map(i => more[k][i]));
+      });
+      currentData.loaded_to = currentData.dates[currentData.dates.length - 1];
+      dataLoadedTo = +new Date(currentData.dates[currentData.dates.length - 1]);
     }
 
-    if (newIndices.length === 0) {
-      currentData.loaded_from = null; // nothing more to fetch
-      return;
-    }
-
-    // Prepend older data to all arrays in currentData
-    const keys = ['dates','opens','highs','lows','closes','volumes',
-      'ema_a','ema_b','sma_a','sma_b','sma_c','sma_d',
-      'bb_up','bb_mid','bb_low','rsi','macd_line','macd_signal','macd_hist'];
-    keys.forEach(k => {
-      if (!more[k] || !currentData[k]) return;
-      currentData[k] = newIndices.map(i => more[k][i]).concat(currentData[k]);
-    });
-    currentData.loaded_from = currentData.dates[0];
-
-    // Re-render with prepended data, preserving current x-axis zoom
+    // Re-render with expanded data, preserving current x-axis zoom
     const s = getSettings();
     const visStart = currentXRange[0];
     const visEnd   = currentXRange[1];
-    // After prepending, update currentXRange[0] to include the newly loaded oldest data
-    currentXRange = [+new Date(currentData.dates[0]), currentXRange[1]];
+    currentXRange = [+new Date(currentData.dates[0]), +new Date(currentData.dates[currentData.dates.length - 1])];
     const newTraces = buildChartTraces(currentData, s, visStart, visEnd);
     const newLayout = buildChartLayout(currentData, visStart, visEnd);
     Plotly.react('chart', newTraces, newLayout, {
       responsive: false, displayModeBar: true,
       modeBarButtonsToRemove: ['lasso2d','select2d'], displaylogo: false,
     });
-    setStatus(currentData.ticker + ' · ' + currentData.tf + ' · ' + currentData.dates.length + ' bars', true);
+    setStatus(currentData.ticker + ' · ' + currentData.tf + ' · ' + currentData.dates.length + ' loaded · ' + getVisibleCount(currentData) + ' shown', true);
   } catch(e) {
-    currentData.loaded_from = null;
-    setStatus('No more data available', true);
+    setStatus('Load more failed: ' + e.message, false);
+  } finally {
+    isLoading = false;
   }
 }
 
@@ -633,7 +677,7 @@ function renderChart(d, isInitial) {
   if (isInitial) {
     const d0ts = +new Date(d.dates[0]);
     const d1ts = +new Date(d.dates[d.dates.length - 1]);
-    const lookbackDays = d.tf === 'monthly' ? 365 * 15 : d.tf === 'weekly' ? 365 * 5 : 365 * 2;
+    const lookbackDays = d.tf === 'monthly' ? 365 * 7.5 : d.tf === 'weekly' ? 365 * 2.5 : 365;
     const lookbackMs  = lookbackDays * 86400000;
     visStart = Math.max(d0ts, d1ts - lookbackMs);
     visEnd   = d1ts;
@@ -686,7 +730,7 @@ document.getElementById('refresh-btn').addEventListener('click', () => {
       currentData.loaded_from = d.loaded_from || d.dates[0];
       currentData.loaded_to   = d.loaded_to   || d.dates[d.dates.length - 1];
       renderChart(d, true);
-      setStatus(d.ticker + ' · ' + d.tf + ' · ' + d.dates.length + ' bars (refreshed)', true);
+      setStatus(d.ticker + ' · ' + d.tf + ' · ' + d.dates.length + ' loaded · ' + getVisibleCount(d) + ' shown (refreshed)', true);
     })
     .catch(e => setStatus('Refresh error: ' + e.message));
 });
@@ -776,6 +820,8 @@ function resizeChart() {
       Plotly.relayout('chart', {
         width: containerRect.width, height: containerRect.height,
         'yaxis.range': [rMin - rPad, rMax + rPad],
+      }).then(() => {
+        setStatus(currentData.ticker + ' · ' + currentData.tf + ' · ' + currentData.dates.length + ' loaded · ' + getVisibleCount(currentData) + ' shown', true);
       });
     }
   }, 150);
@@ -784,7 +830,9 @@ function resizeChart() {
 window.addEventListener('resize', () => {
   if (document.getElementById('chart').data) {
     const containerRect = document.getElementById('chart-container').getBoundingClientRect();
-    Plotly.relayout('chart', { width: containerRect.width, height: containerRect.height });
+    Plotly.relayout('chart', { width: containerRect.width, height: containerRect.height }).then(() => {
+      setStatus(currentData.ticker + ' · ' + currentData.tf + ' · ' + currentData.dates.length + ' loaded · ' + getVisibleCount(currentData) + ' shown', true);
+    });
   }
 });
 
@@ -818,18 +866,20 @@ document.getElementById('chart-area').addEventListener('wheel', function(evt) {
   const cappedSpan = Math.min(newSpan, maxSpan);
   const clampedR0 = clampedR1 - cappedSpan;
 
-  // Check if scrolling left near the left edge of loaded data — trigger load-more
-  const loadedFrom = currentData.loaded_from ? +new Date(currentData.loaded_from) : d0;
-  const isNearLeftEdge = (clampedR0 - loadedFrom) < (r1 - r0) * 0.1;
-  const isScrollingLeft = evt.deltaY > 0;
+  // Check if we need to load more data at either edge
+  // deltaY > 0: scroll down → zoom out → left edge expands → load older data
+  // deltaY < 0: scroll up → zoom in → right edge could expand if near boundary
+  const loadedFrom = dataLoadedFrom || d0;
+  const loadedTo   = dataLoadedTo   || lastBar;
+  const isNearLeftEdge  = (clampedR0 - loadedFrom) < (r1 - r0) * 0.1;
+  const isNearRightEdge = (loadedTo - clampedR1) < (r1 - r0) * 0.1;
 
-  function tsToDateStr(ts) {
-    return new Date(ts).toISOString().slice(0, 10);
+  if (evt.deltaY > 0 && isNearLeftEdge && currentData.loaded_from && !isLoading) {
+    loadMoreData(currentData.ticker, activeTf, -1);  // direction -1 = prepend older
+    return;
   }
-
-  if (isScrollingLeft && isNearLeftEdge && currentData.loaded_from) {
-    // Fetch more historical data and prepend
-    loadMoreData(currentData.ticker, activeTf, clampedR0);
+  if (evt.deltaY < 0 && isNearRightEdge && currentData.loaded_to && !isLoading) {
+    loadMoreData(currentData.ticker, activeTf, +1);  // direction +1 = append newer
     return;
   }
 
@@ -848,12 +898,17 @@ document.getElementById('chart-area').addEventListener('wheel', function(evt) {
     ? [Math.log10(Math.max(0.001, wheelMin - wheelPad)), Math.log10(wheelMax + wheelPad)]
     : [Math.max(0.001, wheelMin - wheelPad), wheelMax + wheelPad];
 
+  function tsToDateStr(ts) {
+    return new Date(ts).toISOString().slice(0, 10);
+  }
+
   Plotly.relayout('chart', {
     'xaxis.range': [tsToDateStr(clampedR0), tsToDateStr(clampedR1)],
     'yaxis.range': wheelYRange,
     'yaxis.autorange': false,
   }).then(() => {
     currentXRange = [clampedR0, clampedR1];
+    setStatus(currentData.ticker + ' · ' + currentData.tf + ' · ' + currentData.dates.length + ' loaded · ' + getVisibleCount(currentData) + ' shown', true);
   });
 });
 
