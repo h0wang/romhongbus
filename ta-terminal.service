@@ -1,0 +1,16 @@
+[Unit]
+Description=TA Terminal - Bloomberg-style charting app
+After=network.target
+
+[Service]
+Type=simple
+User=clawpi
+WorkingDirectory=/home/clawpi/.openclaw/scripts/ta_terminal
+ExecStart=/home/clawpi/.openclaw/venv/bin/python3 /home/clawpi/.openclaw/scripts/ta_terminal/app.py
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

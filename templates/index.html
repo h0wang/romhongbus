@@ -1,0 +1,656 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Romhongbus — Claw ⚡</title>
+<style>
+  :root {
+    --bg: #0d0d0d; --panel: #1a1a1a; --panel2: #141414;
+    --border: #2a2a2a; --border2: #222;
+    --text: #e0e0e0; --muted: #666; --accent: #00ccaa;
+    --green: #00c88a; --red: #ff4444; --orange: #ff9900;
+    --purple: #aa88ff; --input-bg: #111;
+    --sidebar-w: 220px;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; overflow: hidden; }
+
+  body {
+    background: var(--bg); color: var(--text);
+    font-family: 'Segoe UI', Arial, sans-serif; font-size: 13px;
+    display: flex; flex-direction: column;
+  }
+
+  /* ── Topbar ── */
+  .topbar {
+    background: var(--panel); border-bottom: 1px solid var(--border);
+    padding: 7px 12px; display: flex; align-items: center; gap: 10px;
+    flex-shrink: 0; z-index: 10;
+  }
+  #sidebar-toggle {
+    background: none; border: 1px solid var(--border);
+    color: var(--muted); cursor: pointer; font-size: 16px;
+    padding: 2px 8px; border-radius: 4px; line-height: 1; flex-shrink: 0;
+  }
+  #sidebar-toggle:hover { border-color: var(--accent); color: var(--accent); }
+  .logo { font-weight: 700; font-size: 15px; color: var(--accent); white-space: nowrap; }
+  .portfolio-group { display: flex; align-items: center; gap: 5px; }
+  #portfolio-select {
+    background: var(--input-bg); border: 1px solid var(--border);
+    color: var(--text); font-size: 12px; padding: 4px 8px;
+    border-radius: 4px; outline: none; cursor: pointer;
+  }
+  #portfolio-select:focus { border-color: var(--accent); }
+  #portfolio-info {
+    font-size: 11px; color: var(--muted); max-width: 200px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .ticker-input-group { display: flex; align-items: center; gap: 5px; }
+  .ticker-input-group label { color: var(--muted); font-size: 12px; }
+  #ticker-input {
+    background: var(--input-bg); border: 1px solid var(--border);
+    color: var(--accent); font-size: 15px; font-weight: 700;
+    padding: 4px 9px; width: 120px; border-radius: 4px; outline: none; text-transform: uppercase;
+  }
+  #ticker-input:focus { border-color: var(--accent); }
+  .tf-tabs { display: flex; gap: 2px; background: var(--input-bg); border-radius: 5px; padding: 3px; }
+  .tf-btn {
+    background: none; border: none; color: var(--muted);
+    font-size: 12px; font-weight: 600; padding: 4px 11px;
+    border-radius: 4px; cursor: pointer; transition: all 0.15s;
+  }
+  .tf-btn:hover { color: var(--text); }
+  .tf-btn.active { background: #00ccaa22; color: var(--accent); }
+  #load-btn {
+    background: var(--accent); color: #000; border: none;
+    font-size: 12px; font-weight: 700; padding: 5px 13px; border-radius: 4px; cursor: pointer;
+  }
+  #load-btn:hover { opacity: 0.85; }
+  .spacer { flex: 1; }
+  .status { font-size: 11px; color: var(--muted); white-space: nowrap; }
+  .status.ok { color: var(--green); }
+
+  /* ── Settings bar ── */
+  .settings-bar {
+    background: var(--panel); border-bottom: 1px solid var(--border);
+    padding: 5px 12px; display: flex; align-items: center; gap: 8px 12px;
+    flex-shrink: 0; flex-wrap: wrap; row-gap: 5px;
+  }
+  .sec-label {
+    font-size: 10px; font-weight: 700; letter-spacing: 0.07em;
+    text-transform: uppercase; color: var(--muted);
+    padding-right: 4px; border-right: 1px solid var(--border);
+    margin-right: 2px; white-space: nowrap;
+  }
+  .grp { display: flex; align-items: center; gap: 3px; font-size: 11px; color: var(--muted); }
+  .grp label { white-space: nowrap; }
+  .grp input[type="number"] {
+    background: var(--input-bg); border: 1px solid var(--border);
+    color: var(--text); font-size: 12px; padding: 3px 5px;
+    width: 48px; border-radius: 3px; outline: none;
+  }
+  .grp input[type="number"]:focus { border-color: var(--accent); }
+  .tgl { display: flex; align-items: center; gap: 4px; font-size: 11px; cursor: pointer; }
+  .tgl input { cursor: pointer; accent-color: var(--accent); }
+  .tgl-label { white-space: nowrap; }
+  .tgl-label.sma20 { color: #e0e0e0; }
+  .tgl-label.sma60 { color: #ff4444; }
+  .tgl-label.sma120 { color: #4488ff; }
+  .tgl-label.sma200 { color: #00c88a; }
+  .sep { color: var(--border); font-size: 18px; flex-shrink: 0; }
+
+  /* ── Body layout ── */
+  .body-layout { display: flex; flex: 1; overflow: hidden; }
+
+  /* ── Sidebar ── */
+  .sidebar {
+    width: var(--sidebar-w); flex-shrink: 0;
+    background: var(--panel2); border-right: 1px solid var(--border);
+    overflow-y: auto; overflow-x: hidden;
+    transition: width 0.2s ease, opacity 0.2s ease;
+  }
+  .sidebar.collapsed {
+    width: 0; opacity: 0; overflow: hidden; border-right: none;
+  }
+  .sidebar-section { border-bottom: 1px solid var(--border2); }
+  .sidebar-header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 7px 10px; cursor: pointer; user-select: none;
+    font-size: 10px; font-weight: 700; letter-spacing: 0.08em;
+    text-transform: uppercase; color: var(--muted);
+  }
+  .sidebar-header:hover { color: var(--text); }
+  .sidebar-header .arrow { font-size: 9px; transition: transform 0.15s; }
+  .sidebar-section.collapsed .arrow { transform: rotate(-90deg); }
+  .sidebar-section.collapsed .ticker-list { display: none; }
+  .ticker-list { display: flex; flex-wrap: wrap; gap: 4px; padding: 4px 8px 8px; }
+  .ticker-chip {
+    background: var(--panel); border: 1px solid var(--border); border-radius: 4px;
+    padding: 3px 8px; font-size: 11px; font-weight: 600;
+    color: var(--text); cursor: pointer; transition: all 0.12s; white-space: nowrap;
+  }
+  .ticker-chip:hover { border-color: var(--accent); color: var(--accent); background: #00ccaa15; }
+  .ticker-chip.active { background: #00ccaa22; border-color: var(--accent); color: var(--accent); }
+  .sidebar-loading { padding: 12px 10px; color: var(--muted); font-size: 11px; }
+
+  /* ── Chart ── */
+  .chart-area { flex: 1; overflow: hidden; position: relative; }
+  #chart-container { width: 100%; height: 100%; position: relative; }
+  #chart { width: 100%; height: 100%; }
+  .placeholder {
+    position: absolute; inset: 0; display: flex;
+    align-items: center; justify-content: center;
+    color: var(--muted); font-size: 14px; flex-direction: column; gap: 10px;
+  }
+  .placeholder.hidden { display: none; }
+  .placeholder .emoji { font-size: 40px; opacity: 0.3; }
+
+  /* ── Scrollbars ── */
+  ::-webkit-scrollbar { width: 5px; height: 5px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+</style>
+</head>
+<body>
+
+<!-- ── Topbar ── -->
+<div class="topbar">
+  <button id="sidebar-toggle" title="Toggle sidebar">☰</button>
+  <div class="logo">⚡ Romhongbus</div>
+  <div class="portfolio-group">
+    <select id="portfolio-select">
+      <option value="">— Portfolio —</option>
+      <option value="irish">Irish</option>
+      <option value="ignite">Ignite</option>
+    </select>
+    <span id="portfolio-info" style="font-size:11px;color:var(--muted);max-width:200px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"></span>
+  </div>
+  <div class="ticker-input-group">
+    <label>Ticker</label>
+    <input id="ticker-input" type="text" value="SPY" placeholder="e.g. DGE.L" autocomplete="off" spellcheck="false">
+  </div>
+  <div class="tf-tabs">
+    <button class="tf-btn active" data-tf="daily">Daily</button>
+    <button class="tf-btn" data-tf="weekly">Weekly</button>
+    <button class="tf-btn" data-tf="monthly">Monthly</button>
+  </div>
+  <button id="load-btn">Load</button>
+  <div class="spacer"></div>
+  <div class="status" id="status">Ready</div>
+</div>
+
+<!-- ── Settings bar ── -->
+<div class="settings-bar">
+  <span class="sec-label">Scale</span>
+  <label class="tgl"><input type="checkbox" id="log_scale" checked><span class="tgl-label">Log</span></label>
+
+  <span class="sep">|</span>
+  <span class="sec-label">EMA</span>
+  <div class="grp"><label>Fast</label><input type="number" id="ema1" value="12" min="2" max="200"></div>
+  <div class="grp"><label>Slow</label><input type="number" id="ema2" value="26" min="2" max="200"></div>
+
+  <span class="sep">|</span>
+  <span class="sec-label">SMA</span>
+  <label class="tgl"><input type="checkbox" id="sma20_on" checked><span class="tgl-label sma20">20</span></label>
+  <div class="grp"><input type="number" id="sma1" value="20" min="2" max="500"></div>
+  <label class="tgl"><input type="checkbox" id="sma60_on" checked><span class="tgl-label sma60">60</span></label>
+  <div class="grp"><input type="number" id="sma2" value="60" min="2" max="500"></div>
+  <label class="tgl"><input type="checkbox" id="sma120_on" checked><span class="tgl-label sma120">120</span></label>
+  <div class="grp"><input type="number" id="sma3" value="120" min="2" max="500"></div>
+  <label class="tgl"><input type="checkbox" id="sma200_on" checked><span class="tgl-label sma200">200</span></label>
+  <div class="grp"><input type="number" id="sma4" value="200" min="2" max="500"></div>
+
+  <span class="sep">|</span>
+  <span class="sec-label">BB</span>
+  <label class="tgl"><input type="checkbox" id="show_bb"><span class="tgl-label">BB</span></label>
+  <div class="grp"><label>Win</label><input type="number" id="bb_window" value="20" min="2" max="100"></div>
+  <div class="grp"><label>Std</label><input type="number" id="bb_std" value="2" min="0.5" max="4" step="0.5"></div>
+
+  <span class="sep">|</span>
+  <span class="sec-label">Vol</span>
+  <label class="tgl"><input type="checkbox" id="show_vol" checked><span class="tgl-label">Vol</span></label>
+  <div class="grp"><label>H</label><input type="number" id="vol_h" value="12" min="5" max="35" style="width:42px;"></div>
+
+  <span class="sep">|</span>
+  <span class="sec-label">RSI</span>
+  <label class="tgl"><input type="checkbox" id="show_rsi" checked><span class="tgl-label">RSI</span></label>
+  <div class="grp"><label>W</label><input type="number" id="rsi_window" value="14" min="2" max="50"></div>
+  <div class="grp"><label>H</label><input type="number" id="rsi_h" value="16" min="5" max="35" style="width:42px;"></div>
+
+  <span class="sep">|</span>
+  <span class="sec-label">MACD</span>
+  <label class="tgl"><input type="checkbox" id="show_macd" checked><span class="tgl-label">MACD</span></label>
+  <div class="grp">
+    <input type="number" id="macd_fast" value="12" min="2" max="50" style="width:40px;">
+    <span style="color:var(--muted)">/</span>
+    <input type="number" id="macd_slow" value="26" min="2" max="50" style="width:40px;">
+    <span style="color:var(--muted)">/</span>
+    <input type="number" id="macd_signal" value="9" min="2" max="50" style="width:40px;">
+  </div>
+  <div class="grp"><label>H</label><input type="number" id="macd_h" value="16" min="5" max="35" style="width:42px;"></div>
+</div>
+
+<!-- ── Body ── -->
+<div class="body-layout">
+  <div class="sidebar" id="sidebar">
+    <div class="sidebar-loading" id="sidebar-loading">Loading watchlist…</div>
+  </div>
+  <div class="chart-area" id="chart-area">
+    <div id="chart-container">
+      <div class="placeholder" id="placeholder">
+        <div class="emoji">📊</div>
+        <div>Select a ticker from the sidebar or press Load</div>
+      </div>
+      <div id="chart"></div>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
+<script>
+// ── State ──────────────────────────────────────────────────────────────────
+let currentData   = null;
+let activeTf      = 'daily';
+let activeTicker  = null;
+let portfolioData = null;       // loaded portfolio data
+let currentXRange = null;       // tracks current xaxis range for wheel zoom
+
+// ── Portfolio overlay helpers ──────────────────────────────────────────────
+var chartDiv = document.getElementById('chart');
+
+function formatPrice(p) {
+  if (p == null || isNaN(p)) return '—';
+  return p >= 1000 ? p.toFixed(0) : p >= 10 ? p.toFixed(1) : p.toFixed(2);
+}
+
+// ── Sidebar ─────────────────────────────────────────────────────────────────
+const SECTION_LABELS = {
+  primary:    'Primary',
+  secondary:  'Secondary',
+  index:      'Index',
+  alternative:'Alternatives',
+  sector:     'Sectors',
+};
+
+let watchlistData = null;  // full watchlist from server
+
+function buildSidebar(data) {
+  watchlistData = data;
+  renderSidebar(data);
+}
+
+function renderSidebar(data) {
+  const sidebar = document.getElementById('sidebar');
+  sidebar.innerHTML = '';
+  Object.entries(data).forEach(([section, tickers]) => {
+    if (!Array.isArray(tickers) || tickers.length === 0) return;
+    const secEl = document.createElement('div');
+    secEl.className = 'sidebar-section';
+    const header = document.createElement('div');
+    header.className = 'sidebar-header';
+    header.innerHTML = `<span>${SECTION_LABELS[section] || section}</span><span class="arrow">▾</span>`;
+    header.addEventListener('click', () => secEl.classList.toggle('collapsed'));
+    const list = document.createElement('div');
+    list.className = 'ticker-list';
+    tickers.forEach(ticker => {
+      const chip = document.createElement('div');
+      chip.className = 'ticker-chip';
+      chip.textContent = ticker;
+      chip.addEventListener('click', () => loadTicker(ticker));
+      list.appendChild(chip);
+    });
+    secEl.appendChild(header);
+    secEl.appendChild(list);
+    sidebar.appendChild(secEl);
+  });
+}
+
+function loadTicker(ticker) {
+  document.getElementById('ticker-input').value = ticker;
+  activeTicker = ticker;
+  document.querySelectorAll('.ticker-chip').forEach(c => c.classList.remove('active'));
+  document.querySelectorAll('.ticker-chip').forEach(c => {
+    if (c.textContent.trim() === ticker) c.classList.add('active');
+  });
+  loadChart();
+}
+
+function setStatus(msg, ok) {
+  const el = document.getElementById('status');
+  el.textContent = msg;
+  el.className = 'status' + (ok ? ' ok' : '');
+}
+
+// ── Settings ─────────────────────────────────────────────────────────────────
+function getSettings() {
+  return {
+    ema1: parseInt(document.getElementById('ema1').value) || 12,
+    ema2: parseInt(document.getElementById('ema2').value) || 26,
+    sma1_on: document.getElementById('sma20_on').checked,
+    sma1: parseInt(document.getElementById('sma1').value) || 20,
+    sma2_on: document.getElementById('sma60_on').checked,
+    sma2: parseInt(document.getElementById('sma2').value) || 60,
+    sma3_on: document.getElementById('sma120_on').checked,
+    sma3: parseInt(document.getElementById('sma3').value) || 120,
+    sma4_on: document.getElementById('sma200_on').checked,
+    sma4: parseInt(document.getElementById('sma4').value) || 200,
+    bb_window: parseInt(document.getElementById('bb_window').value) || 20,
+    bb_std: parseFloat(document.getElementById('bb_std').value) || 2,
+    rsi_window: parseInt(document.getElementById('rsi_window').value) || 14,
+    macd_fast: parseInt(document.getElementById('macd_fast').value) || 12,
+    macd_slow: parseInt(document.getElementById('macd_slow').value) || 26,
+    macd_signal: parseInt(document.getElementById('macd_signal').value) || 9,
+    show_bb: document.getElementById('show_bb').checked,
+    show_rsi: document.getElementById('show_rsi').checked,
+    show_macd: document.getElementById('show_macd').checked,
+    show_vol: document.getElementById('show_vol').checked,
+  };
+}
+
+// ── Chart load ───────────────────────────────────────────────────────────────
+function loadChart() {
+  const ticker = document.getElementById('ticker-input').value.trim().toUpperCase();
+  if (!ticker) return;
+  const s = getSettings();
+  const params = new URLSearchParams({
+    ticker, tf: activeTf,
+    ema1: s.ema1, ema2: s.ema2,
+    sma1: s.sma1, sma2: s.sma2, sma3: s.sma3, sma4: s.sma4,
+    bb_window: s.bb_window, bb_std: s.bb_std,
+    rsi_window: s.rsi_window,
+    macd_fast: s.macd_fast, macd_slow: s.macd_slow, macd_signal: s.macd_signal,
+  });
+  setStatus('Loading…');
+  document.getElementById('placeholder').classList.add('hidden');
+  fetch('/api/chart_data?' + params)
+    .then(r => r.json())
+    .then(d => {
+      if (d.error) { setStatus('Error: ' + d.error); return; }
+      currentData = d;
+      renderChart(d);
+      setStatus(d.ticker + ' · ' + d.tf + ' · ' + d.dates.length + ' bars', true);
+    })
+    .catch(e => setStatus('Fetch error: ' + e.message));
+}
+
+// ── Render ───────────────────────────────────────────────────────────────────
+function renderChart(d) {
+  const s = getSettings();
+  const show_bb = s.show_bb, show_rsi = s.show_rsi;
+  const show_macd = s.show_macd, show_vol = s.show_vol;
+
+  const UP = '#00c88a', DN = '#ff4444';
+  const C_EMA1 = '#00ccaa', C_EMA2 = '#ff9900';
+  const C_SMA1 = '#e0e0e0', C_SMA2 = '#ff4444', C_SMA3 = '#4488ff', C_SMA4 = '#00c88a';
+  const C_BB = '#6677aa';
+
+  const activeRows = ['main'];
+  if (show_vol)  activeRows.push('vol');
+  if (show_rsi)  activeRows.push('rsi');
+  if (show_macd) activeRows.push('macd');
+
+  const mainShare = activeRows.length === 1 ? 1.0 : (
+    1.0 - (show_vol  ? parseFloat(document.getElementById('vol_h').value  || 12) / 100 : 0)
+        - (show_rsi  ? parseFloat(document.getElementById('rsi_h').value  || 16) / 100 : 0)
+        - (show_macd ? parseFloat(document.getElementById('macd_h').value || 16) / 100 : 0)
+  );
+  const volH  = show_vol  ? (parseFloat(document.getElementById('vol_h').value)  || 12) / 100 : 0;
+  const rsiH  = show_rsi  ? (parseFloat(document.getElementById('rsi_h').value)  || 16) / 100 : 0;
+  const macdH = show_macd ? (parseFloat(document.getElementById('macd_h').value) || 16) / 100 : 0;
+  const spacer = 0.03;
+
+  const layoutAxes = {};
+  const useLog = document.getElementById('log_scale').checked;
+  layoutAxes['yaxis'] = {
+    domain: [1 - mainShare, 1.0], side: 'right', showgrid: true, gridcolor: '#1e1e1e',
+    zeroline: false, tickfont: {color: '#888', size: 10},
+    title: {text: 'Price', standoff: 8}, fixedrange: false,
+    type: useLog ? 'log' : 'linear',
+  };
+
+  let top = 1 - mainShare - spacer;
+  if (show_vol) {
+    layoutAxes['yaxis2'] = { domain: [top - volH, top], side: 'right', showgrid: false, zeroline: false, tickfont: {color: '#666', size: 9}, title: {text: 'Vol', standoff: 8}, fixedrange: true };
+    top = top - volH - spacer;
+  }
+  if (show_rsi) {
+    layoutAxes['yaxis3'] = { domain: [top - rsiH, top], side: 'right', showgrid: false, zeroline: true, zerolinecolor: '#333', tickfont: {color: '#666', size: 9}, title: {text: 'RSI', standoff: 8}, fixedrange: true };
+    top = top - rsiH - spacer;
+  }
+  if (show_macd) {
+    layoutAxes['yaxis4'] = { domain: [0.0, top], side: 'right', showgrid: false, zeroline: true, zerolinecolor: '#333', tickfont: {color: '#666', size: 9}, title: {text: 'MACD', standoff: 8}, fixedrange: true };
+  }
+
+  layoutAxes['xaxis'] = {
+    showgrid: true, gridcolor: '#1e1e1e', zeroline: false,
+    tickfont: {color: '#666', size: 10}, rangeslider: {visible: true, thickness: 0.06}, spikecolor: '#333',
+  };
+
+  const traces = [];
+
+  traces.push({
+    type: 'candlestick',
+    x: d.dates, open: d.opens, high: d.highs, low: d.lows, close: d.closes,
+    name: 'OHLC',
+    increasing: {line: {color: UP}, fillcolor: UP},
+    decreasing: {line: {color: DN}, fillcolor: DN},
+    yaxis: 'y', hoverinfo: 'x+y',
+  });
+
+  traces.push({type:'scatter', x:d.dates, y:d.ema_a, name:'EMA'+s.ema1, mode:'lines', line:{color:C_EMA1, width:1.5}, yaxis:'y', hoverinfo:'skip'});
+  traces.push({type:'scatter', x:d.dates, y:d.ema_b, name:'EMA'+s.ema2, mode:'lines', line:{color:C_EMA2, width:1.5}, yaxis:'y', hoverinfo:'skip'});
+
+  if (s.sma1_on) traces.push({type:'scatter', x:d.dates, y:d.sma_a, name:'SMA'+s.sma1, mode:'lines', line:{color:C_SMA1, width:1.2, dash:'dot'}, yaxis:'y', hoverinfo:'skip'});
+  if (s.sma2_on) traces.push({type:'scatter', x:d.dates, y:d.sma_b, name:'SMA'+s.sma2, mode:'lines', line:{color:C_SMA2, width:1.2, dash:'dot'}, yaxis:'y', hoverinfo:'skip'});
+  if (s.sma3_on) traces.push({type:'scatter', x:d.dates, y:d.sma_c, name:'SMA'+s.sma3, mode:'lines', line:{color:C_SMA3, width:1.2, dash:'dot'}, yaxis:'y', hoverinfo:'skip'});
+  if (s.sma4_on) traces.push({type:'scatter', x:d.dates, y:d.sma_d, name:'SMA'+s.sma4, mode:'lines', line:{color:C_SMA4, width:1.5, dash:'dash'}, yaxis:'y', hoverinfo:'skip'});
+
+  if (show_bb) {
+    traces.push({type:'scatter', x:d.dates, y:d.bb_up, name:'BB Upper', mode:'lines', line:{color:C_BB, width:0.8, dash:'dot'}, yaxis:'y', fill:'none', hoverinfo:'skip'});
+    traces.push({type:'scatter', x:d.dates, y:d.bb_mid, name:'BB Mid', mode:'lines', line:{color:C_BB, width:0.5, dash:'dot'}, yaxis:'y', hoverinfo:'skip'});
+    traces.push({type:'scatter', x:d.dates, y:d.bb_low, name:'BB Lower', mode:'lines', line:{color:C_BB, width:0.8, dash:'dot'}, yaxis:'y', fill:'tonexty', fillcolor:'rgba(100,119,170,0.07)', hoverinfo:'skip'});
+  }
+
+  if (show_vol) {
+    const vcolors = d.opens.map((o, i) => (d.closes[i] != null && d.closes[i] >= o) ? UP+'88' : DN+'88');
+    traces.push({type:'bar', x:d.dates, y:d.volumes, name:'Vol', marker:{color:vcolors, line:{width:0}}, yaxis:'y2', showlegend:false, hoverinfo:'x'});
+  }
+
+  if (show_rsi) {
+    traces.push({type:'scatter', x:d.dates, y:d.rsi, name:'RSI', mode:'lines', line:{color:'#aa88ff', width:1.5}, yaxis:'y3', showlegend:false, hoverinfo:'skip'});
+    traces.push({type:'scatter', x:[d.dates[0], d.dates[d.dates.length-1]], y:[70,70], mode:'lines', line:{color:'#ff4444', width:0.8, dash:'dot'}, yaxis:'y3', showlegend:false, hoverinfo:'skip'});
+    traces.push({type:'scatter', x:[d.dates[0], d.dates[d.dates.length-1]], y:[30,30], mode:'lines', line:{color:'#00c88a', width:0.8, dash:'dot'}, yaxis:'y3', showlegend:false, hoverinfo:'skip'});
+  }
+
+  if (show_macd) {
+    const mcolors = d.macd_hist.map(h => h >= 0 ? UP : DN);
+    traces.push({type:'bar', x:d.dates, y:d.macd_hist, name:'MACD Hist', marker:{color:mcolors, line:{width:0}}, yaxis:'y4', showlegend:false, hoverinfo:'skip'});
+    traces.push({type:'scatter', x:d.dates, y:d.macd_line, name:'MACD', mode:'lines', line:{color:'#00aaff', width:1.5}, yaxis:'y4', showlegend:false, hoverinfo:'skip'});
+    traces.push({type:'scatter', x:d.dates, y:d.macd_signal, name:'Signal', mode:'lines', line:{color:C_EMA2, width:1.2}, yaxis:'y4', showlegend:false, hoverinfo:'skip'});
+  }
+
+  const shapes = [];
+
+  // Force synchronous layout recalc so containerRect is accurate
+  const chartArea = document.getElementById('chart-area');
+  void chartArea.offsetHeight;
+  const containerRect = document.getElementById('chart-container').getBoundingClientRect();
+  const d0 = d.dates[0], d1 = d.dates[d.dates.length - 1];
+  // Visible lookback window per timeframe (before last bar)
+  const lookbackDays = d.tf === 'monthly' ? 365 * 15 : d.tf === 'weekly' ? 365 * 5 : 365 * 2;
+  const lookbackMs = lookbackDays * 86400000;
+  const d1ts = +new Date(d1);
+  const d0ts = +new Date(d0);
+  // Full range: all loaded data (for scrolling back)
+  const fullSpan = d1ts - d0ts;
+  const rightPad = Math.max(fullSpan * 0.05, 86400000 * 3);
+  // Visible range: last 2/5/15 years + right padding
+  const visibleStart = new Date(Math.max(d0ts, d1ts - lookbackMs)).toISOString().slice(0, 10);
+  const visibleEnd = new Date(d1ts + rightPad).toISOString().slice(0, 10);
+  const xaxisRange = [visibleStart, visibleEnd];
+  // currentXRange stores full range so wheel zoom can scroll back through all loaded data
+  currentXRange = [d0ts, d1ts + rightPad];
+  const layout = {
+    paper_bgcolor: '#0d0d0d', plot_bgcolor: '#0d0d0d',
+    font: {color: '#e0e0e0', size: 11, family: 'Segoe UI, Arial'},
+    title: {text: d.ticker + ' — ' + d.tf.charAt(0).toUpperCase() + d.tf.slice(1), font:{color: '#00ccaa', size: 14}},
+    margin: {t: 55, r: 70, b: 60, l: 60},
+    showlegend: false, hovermode: 'x unified', dragmode: 'pan',
+    ...layoutAxes,
+    legend: {orientation: 'h', y: 1.03, x: 0.5, xanchor: 'center', font:{color:'#888', size:10}},
+    width: containerRect.width || 800,
+    height: containerRect.height || 500,
+    xaxis: {
+      ...layoutAxes['xaxis'],
+      range: xaxisRange,
+    },
+    // Force y-axis to cover only the actual price range
+    yaxis: {
+      ...layoutAxes['yaxis'],
+      rangemode: 'normal',
+    },
+    shapes,
+  };
+
+  const config = {
+    responsive: false, displayModeBar: true,
+    modeBarButtonsToRemove: ['lasso2d', 'select2d'], displaylogo: false,
+  };
+
+  Plotly.purge('chart');
+  // Ensure the chart div has the correct inline dimensions before Plotly renders
+  const chartEl = document.getElementById('chart');
+  chartEl.style.width = (containerRect.width || 800) + 'px';
+  chartEl.style.height = (containerRect.height || 500) + 'px';
+  Plotly.newPlot('chart', traces, layout, config).catch(e => setStatus('Plot error: ' + e.message));
+}
+
+// ── Events ─────────────────────────────────────────────────────────────────
+document.getElementById('load-btn').addEventListener('click', loadChart);
+document.getElementById('ticker-input').addEventListener('keydown', e => { if (e.key === 'Enter') loadChart(); });
+
+document.querySelectorAll('.tf-btn').forEach(btn => {
+  btn.addEventListener('click', function() {
+    document.querySelectorAll('.tf-btn').forEach(b => b.classList.remove('active'));
+    this.classList.add('active');
+    activeTf = this.dataset.tf;
+    if (currentData) loadChart();
+  });
+});
+
+['show_bb','show_rsi','show_macd','show_vol',
+ 'sma20_on','sma60_on','sma120_on','sma200_on',
+ 'ema1','ema2','sma1','sma2','sma3','sma4',
+ 'bb_window','bb_std','rsi_window',
+ 'macd_fast','macd_slow','macd_signal',
+ 'log_scale',
+ 'vol_h','rsi_h','macd_h'].forEach(id => {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.addEventListener('change', () => { if (currentData) renderChart(currentData); });
+  el.addEventListener('input',   () => { if (currentData) renderChart(currentData); });
+});
+
+fetch('/api/watchlist').then(r => r.json()).then(buildSidebar).catch(() => {
+  document.getElementById('sidebar-loading').textContent = 'Failed to load watchlist';
+});
+
+// ── Portfolio selector ─────────────────────────────────────────────────────
+document.getElementById('portfolio-select').addEventListener('change', function() {
+  const key = this.value;
+  if (!key) {
+    portfolioData = null;
+    document.getElementById('portfolio-info').textContent = '';
+    // Restore full watchlist sidebar
+    if (watchlistData) renderSidebar(watchlistData);
+    if (currentData) renderChart(currentData);
+    setTimeout(resizeChart, 250);
+    return;
+  }
+  fetch('/api/portfolios')
+    .then(r => r.json())
+    .then(data => {
+      portfolioData = data[key] || null;
+      if (!portfolioData) return;
+      const h = portfolioData.holdings || [];
+      var infoEl = document.getElementById('portfolio-info');
+      if (infoEl) {
+        infoEl.textContent = portfolioData.name + ' · ' + h.length + ' holdings';
+      }
+      // Replace sidebar with only portfolio tickers
+      const portSections = { primary: h.map(x => x.ticker), secondary: [], index: [], alternative: [], sector: [] };
+      renderSidebar(portSections);
+      // Delay loadChart until after sidebar transition completes
+      setTimeout(() => {
+        loadChart();
+        setTimeout(resizeChart, 250);
+      }, 220);
+    })
+    .catch(e => { console.error('Portfolio load error:', e); portfolioData = null; });
+});
+
+// Trigger chart resize after DOM changes (sidebar toggle, portfolio switch)
+function resizeChart() {
+  setTimeout(() => {
+    if (document.getElementById('chart').data) {
+      const chartArea = document.getElementById('chart-area');
+      void chartArea.offsetHeight;
+      const containerRect = document.getElementById('chart-container').getBoundingClientRect();
+      Plotly.relayout('chart', { width: containerRect.width, height: containerRect.height });
+    }
+  }, 150);
+}
+
+window.addEventListener('resize', () => {
+  if (document.getElementById('chart').data) {
+    const containerRect = document.getElementById('chart-container').getBoundingClientRect();
+    Plotly.relayout('chart', { width: containerRect.width, height: containerRect.height });
+  }
+});
+
+document.getElementById('sidebar-toggle').addEventListener('click', () => {
+  document.getElementById('sidebar').classList.toggle('collapsed');
+  resizeChart();
+});
+
+// Mouse wheel zoom — scroll up zooms in, scroll down zooms out
+// The visible right edge (last bar + its gap) stays fixed; left edge moves
+document.getElementById('chart-area').addEventListener('wheel', function(evt) {
+  if (!currentData || !currentData.dates || currentData.dates.length === 0) return;
+  evt.preventDefault();
+  const dates = currentData.dates;
+  const total = dates.length;
+  const currentRange = currentXRange;
+  if (!currentRange) return;
+  if (Math.abs(evt.deltaY) < 20) return;
+
+  const d0 = +new Date(dates[0]);
+  const lastBar = +new Date(dates[dates.length - 1]);
+  const zoomFactor = Math.pow(1.06, evt.deltaY / 50);
+  const [r0, r1] = currentRange;
+  const currentSpan = r1 - r0;
+  const newSpan = Math.max(currentSpan * zoomFactor, total * 0.005, 86400000 * 3);
+
+  // Keep the visible right edge (r1) fixed — preserves last bar + its gap
+  const clampedR1 = r1;
+  // Don't let left edge go before first data point
+  const maxSpan = clampedR1 - d0;
+  const cappedSpan = Math.min(newSpan, maxSpan);
+  const clampedR0 = clampedR1 - cappedSpan;
+
+  function tsToDateStr(ts) {
+    return new Date(ts).toISOString().slice(0, 10);
+  }
+  Plotly.relayout('chart', { 'xaxis.range': [tsToDateStr(clampedR0), tsToDateStr(clampedR1)] }).then(() => {
+    currentXRange = [clampedR0, clampedR1];
+  });
+});
+
+window.addEventListener('load', () => {
+  activeTicker = document.getElementById('ticker-input').value.trim().toUpperCase();
+  loadChart();
+});
+</script>
+</body>
+</html>
