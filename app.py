@@ -186,6 +186,7 @@ def chart_data():
     ticker = request.args.get("ticker", "^SPX").strip().upper()
     tf     = request.args.get("tf", "daily")
     refresh = request.args.get("refresh", "false").lower() == "true"
+    limit  = request.args.get("limit", type=int)   # if set, return last N candles only
 
     # Indicator settings
     ema1    = int(request.args.get("ema1", 12))
@@ -212,6 +213,10 @@ def chart_data():
 
     if df is None or df.empty:
         return jsonify({"error": f"No data for {ticker}"}), 404
+
+    # Apply limit to df before building response (last N candles)
+    if limit and limit > 0:
+        df = df.tail(limit)
 
     result = build_ohlcv_response(ticker, tf, df)
     result["settings"] = {

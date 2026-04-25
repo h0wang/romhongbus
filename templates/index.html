@@ -189,12 +189,9 @@
 <!-- ── Settings bar ── -->
 <div class="settings-bar">
   <span class="sec-label">Scale</span>
-  <label class="tgl"><input type="checkbox" id="log_scale" checked><span class="tgl-label">Log</span></label>
+  <label class="tgl"><input type="checkbox" id="log_scale"><span class="tgl-label">Log</span></label>
 
   <span class="sep">|</span>
-  <span class="sec-label">EMA</span>
-  <div class="grp"><label>Fast</label><input type="number" id="ema1" value="12" min="2" max="200"></div>
-  <div class="grp"><label>Slow</label><input type="number" id="ema2" value="26" min="2" max="200"></div>
 
   <span class="sep">|</span>
   <span class="sec-label">SMA</span>
@@ -254,7 +251,7 @@
 </div>
 
 <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
-<script>
+<script data-ts="1777149191">
 // ── State ──────────────────────────────────────────────────────────────────
 let currentData   = null;
 let activeTf      = 'daily';
@@ -346,8 +343,7 @@ function getVisibleCount(d) {
 // ── Settings ─────────────────────────────────────────────────────────────────
 function getSettings() {
   return {
-    ema1: parseInt(document.getElementById('ema1').value) || 12,
-    ema2: parseInt(document.getElementById('ema2').value) || 26,
+
     sma1_on: document.getElementById('sma20_on').checked,
     sma1: parseInt(document.getElementById('sma1').value) || 20,
     sma2_on: document.getElementById('sma60_on').checked,
@@ -376,11 +372,12 @@ function loadChart() {
   const s = getSettings();
   const params = new URLSearchParams({
     ticker, tf: activeTf,
-    ema1: s.ema1, ema2: s.ema2,
+
     sma1: s.sma1, sma2: s.sma2, sma3: s.sma3, sma4: s.sma4,
     bb_window: s.bb_window, bb_std: s.bb_std,
     rsi_window: s.rsi_window,
     macd_fast: s.macd_fast, macd_slow: s.macd_slow, macd_signal: s.macd_signal,
+    limit: 400,   // start with 1.5yr for fast render, load more on scroll
   });
   setStatus('Loading…');
   document.getElementById('placeholder').classList.add('hidden');
@@ -394,163 +391,161 @@ function loadChart() {
       dataLoadedFrom = +new Date(currentData.dates[0]);
       dataLoadedTo   = +new Date(currentData.dates[currentData.dates.length - 1]);
       renderChart(d, true);
-      setStatus(d.ticker + ' · ' + d.tf + ' · ' + d.dates.length + ' loaded · ' + getVisibleCount(d) + ' shown', true);
+      setTimeout(() => {
+        setStatus(d.ticker + ' · ' + d.tf + ' · ' + d.dates.length + ' loaded · ' + getVisibleCount(d) + ' shown', true);
+        console.log('Initial status bar getVisibleCount:', getVisibleCount(d), 'currentXRange:', currentXRange ? [new Date(currentXRange[0]).toISOString().slice(0,10), new Date(currentXRange[1]).toISOString().slice(0,10)] : 'null');
+      }, 100);
     })
-    .catch(e => setStatus('Fetch error: ' + e.message));
+    .catch(e => { console.error('loadTicker fetch failed:', e); isLoading = false; });
 }
 
 
 // ── Load More Data (on-demand historical append) ────────────────────────────
 // direction: -1 = prepend older data (left), +1 = append newer data (right)
+
+let loadMoreCount = 0;
+
 async function loadMoreData(ticker, tf, direction) {
-  if (isLoading) return;
+  var id = ++loadMoreCount;
+  console.log('START', id, direction);
+  if (isLoading) { console.log('busy, return'); return; }
   isLoading = true;
   try {
     setStatus('Loading more…');
-    const moreResp = await fetch(`/api/chart_data/more?ticker=${encodeURIComponent(ticker)}&tf=${tf}`);
-    if (!moreResp.ok) throw new Error('No more data');
-    const more = await moreResp.json();
+    var resp = await fetch('/api/chart_data/more?ticker=' + encodeURIComponent(ticker) + '&tf=' + tf);
+    if (!resp.ok) throw new Error('fetch ' + resp.status);
+    var more = await resp.json();
     if (more.error) throw new Error(more.error);
+    console.log('got', more.dates.length, 'bars');
+
+    var curOldestTs = +new Date(currentData.dates[0]);
+    var curNewestTs = +new Date(currentData.dates[currentData.dates.length - 1]);
+    var moreDates0  = +new Date(more.dates[0]);
+    var moreLast    = +new Date(more.dates[more.dates.length - 1]);
+
+    var newKeys = ['dates','opens','highs','lows','closes','volumes','ema_a','ema_b','sma_a','sma_b','sma_c','sma_d','bb_up','bb_mid','bb_low','rsi','macd_line','macd_signal','macd_hist'];
+
+    // The zoom range we want to apply after updating traces.
+    // Use the pending range from the wheel event if available,
+    // otherwise keep the current view.
+    var targetXRange = pendingXRange || currentXRange;
+    pendingXRange = null;   // clear it now
+
+    function applyUpdate(newData) {
+      // Replace currentData with full dataset
+      newKeys.forEach(function(k) { if (newData[k]) currentData[k] = newData[k]; });
+      // Use target range for visStart/visEnd so zoom is preserved
+      var visStart = targetXRange ? targetXRange[0] : (+new Date(currentData.dates[0]));
+      var visEnd   = targetXRange ? targetXRange[1] : (+new Date(currentData.dates[currentData.dates.length - 1]));
+      var s = getSettings();
+      var newTraces = buildChartTraces(currentData, s, visStart, visEnd);
+      var newLayout = buildChartLayout(currentData, visStart, visEnd);
+      Plotly.react('chart', newTraces, newLayout, { responsive: false, displayModeBar: true, modeBarButtonsToRemove: ['lasso2d','select2d'], displaylogo: false });
+      currentXRange = [visStart, visEnd];
+      setStatus(currentData.ticker + ' · ' + currentData.tf + ' · ' + currentData.dates.length + ' loaded', true);
+    }
 
     if (direction === -1) {
-      // ── Prepend older data (left side) ────────────────────────────────────
-      const curOldestTs = +new Date(currentData.dates[0]);
-      const newIndices = [];
-      for (let i = 0; i < more.dates.length; i++) {
-        if (+new Date(more.dates[i]) < curOldestTs - 86400000) {
-          newIndices.push(i);
-        }
-      }
-      if (newIndices.length === 0) {
+      // Left edge: check if all data already loaded
+      if (curOldestTs === moreDates0) {
+        // All historical data already in currentData — but might be subset. Replace with full.
         currentData.loaded_from = null;
+        dataLoadedFrom = null;
+        applyUpdate(more);
+        console.log('DONE edge (full data loaded)', id);
         isLoading = false;
         return;
       }
-      const keys = ['dates','opens','highs','lows','closes','volumes',
-        'ema_a','ema_b','sma_a','sma_b','sma_c','sma_d',
-        'bb_up','bb_mid','bb_low','rsi','macd_line','macd_signal','macd_hist'];
-      keys.forEach(k => {
+      // Find truly older bars not in currentData
+      var newIndices = [];
+      for (var i = 0; i < more.dates.length; i++) {
+        if (+new Date(more.dates[i]) < curOldestTs - 86400000) newIndices.push(i);
+      }
+      console.log('newIndices', newIndices.length, 'id', id);
+      if (newIndices.length === 0) {
+        currentData.loaded_from = null;
+        dataLoadedFrom = null;
+        applyUpdate(more);
+        console.log('DONE empty (full data loaded)', id);
+        isLoading = false;
+        return;
+      }
+      // Prepend new older bars
+      var newData = {};
+      newKeys.forEach(function(k) {
         if (!more[k] || !currentData[k]) return;
-        currentData[k] = newIndices.map(i => more[k][i]).concat(currentData[k]);
+        newData[k] = newIndices.map(function(i) { return more[k][i]; }).concat(currentData[k]);
       });
-      currentData.loaded_from = currentData.dates[0];
-      dataLoadedFrom = +new Date(currentData.dates[0]);
+      currentData.loaded_from = null;
+      dataLoadedFrom = null;
+      applyUpdate(newData);
     } else {
-      // ── Append newer data (right side) ─────────────────────────────────────
-      const curNewestTs = +new Date(currentData.dates[currentData.dates.length - 1]);
-      const newIndices = [];
-      for (let i = 0; i < more.dates.length; i++) {
-        if (+new Date(more.dates[i]) > curNewestTs + 86400000) {
-          newIndices.push(i);
-        }
+      // Right edge: check if all newer data already loaded
+      if (moreLast === curNewestTs) {
+        currentData.loaded_to = null;
+        dataLoadedTo = null;
+        applyUpdate(more);
+        console.log('DONE right edge (full data loaded)', id);
+        isLoading = false;
+        return;
+      }
+      var newIndices = [];
+      for (var i = 0; i < more.dates.length; i++) {
+        if (+new Date(more.dates[i]) > curNewestTs + 86400000) newIndices.push(i);
       }
       if (newIndices.length === 0) {
         currentData.loaded_to = null;
+        dataLoadedTo = null;
+        applyUpdate(more);
+        console.log('DONE right empty (full data loaded)', id);
         isLoading = false;
         return;
       }
-      const keys = ['dates','opens','highs','lows','closes','volumes',
-        'ema_a','ema_b','sma_a','sma_b','sma_c','sma_d',
-        'bb_up','bb_mid','bb_low','rsi','macd_line','macd_signal','macd_hist'];
-      keys.forEach(k => {
+      var newData = {};
+      newKeys.forEach(function(k) {
         if (!more[k] || !currentData[k]) return;
-        currentData[k] = currentData[k].concat(newIndices.map(i => more[k][i]));
+        newData[k] = currentData[k].concat(newIndices.map(function(i) { return more[k][i]; }));
       });
       currentData.loaded_to = currentData.dates[currentData.dates.length - 1];
       dataLoadedTo = +new Date(currentData.dates[currentData.dates.length - 1]);
+      applyUpdate(newData);
     }
-
-    // Re-render with expanded data, preserving current x-axis zoom
-    const s = getSettings();
-    const visStart = currentXRange[0];
-    const visEnd   = currentXRange[1];
-    currentXRange = [+new Date(currentData.dates[0]), +new Date(currentData.dates[currentData.dates.length - 1])];
-    const newTraces = buildChartTraces(currentData, s, visStart, visEnd);
-    const newLayout = buildChartLayout(currentData, visStart, visEnd);
-    Plotly.react('chart', newTraces, newLayout, {
-      responsive: false, displayModeBar: true,
-      modeBarButtonsToRemove: ['lasso2d','select2d'], displaylogo: false,
-    });
-    setStatus(currentData.ticker + ' · ' + currentData.tf + ' · ' + currentData.dates.length + ' loaded · ' + getVisibleCount(currentData) + ' shown', true);
   } catch(e) {
+    console.log('ERROR id', id, e.message);
     setStatus('Load more failed: ' + e.message, false);
   } finally {
     isLoading = false;
   }
 }
 
+
+
 // ── Render ───────────────────────────────────────────────────────────────────
 function buildChartTraces(d, s, visStart, visEnd) {
-  const UP = '#00c88a', DN = '#ff4444';
-  const C_EMA1 = '#00ccaa', C_EMA2 = '#ff9900';
-  const C_SMA1 = '#e0e0e0', C_SMA2 = '#ff4444', C_SMA3 = '#4488ff', C_SMA4 = '#00c88a';
-  const C_BB = '#6677aa';
+  const UP='#00c88a', DN='#ff4444', C_EMA1='#00ccaa', C_EMA2='#ff9900', C_SMA1='#e0e0e0', C_SMA2='#ff4444', C_SMA3='#4488ff', C_SMA4='#00c88a', C_BB='#6677aa';
+  const show_bb=!!s.show_bb, show_rsi=!!s.show_rsi, show_macd=!!s.show_macd, show_vol=!!s.show_vol;
 
-  const show_bb = s.show_bb, show_rsi = s.show_rsi;
-  const show_macd = s.show_macd, show_vol = s.show_vol;
+  // Include ALL candles in traces — Plotly clips by xaxis.range for rendering
+  var _d=d.dates, _o=d.opens, _h=d.highs, _l=d.lows, _c=d.closes, _v=d.volumes;
+  var sl = a => (a||[]);
 
-  // Filter to visible window only — this is the key fix so Plotly auto-ranges correctly
-  const visDates = [], visOpens = [], visHighs = [], visLows = [], visCloses = [], visVolumes = [];
-  for (let i = 0; i < d.dates.length; i++) {
-    const t = +new Date(d.dates[i]);
-    if (t < visStart || t > visEnd) continue;
-    visDates.push(d.dates[i]);
-    visOpens.push(d.opens[i]);
-    visHighs.push(d.highs[i]);
-    visLows.push(d.lows[i]);
-    visCloses.push(d.closes[i]);
-    visVolumes.push(d.volumes[i]);
-  }
-  // Also filter indicator arrays by the same index range
-  const idx0 = d.dates.findIndex((_, i) => +new Date(d.dates[i]) >= visStart);
-  const idx1 = d.dates.findLastIndex((_, i) => +new Date(d.dates[i]) <= visEnd);
-  const slice = arr => (idx0 >= 0 && idx1 >= idx0 && arr) ? arr.slice(idx0, idx1 + 1) : [];
+  var traces = [];
+  traces.push({type:'candlestick', x:_d, open:_o, high:_h, low:_l, close:_c, name:'OHLC', increasing:{line:{color:UP},fillcolor:UP}, decreasing:{line:{color:DN},fillcolor:DN}, yaxis:'y', hoverinfo:'x+y'});
 
-  const traces = [];
-
-  traces.push({
-    type: 'candlestick',
-    x: visDates, open: visOpens, high: visHighs, low: visLows, close: visCloses,
-    name: 'OHLC',
-    increasing: {line: {color: UP}, fillcolor: UP},
-    decreasing: {line: {color: DN}, fillcolor: DN},
-    yaxis: 'y', hoverinfo: 'x+y',
-  });
-
-  traces.push({type:'scatter', x:visDates, y:slice(d.ema_a), name:'EMA'+s.ema1, mode:'lines', line:{color:C_EMA1, width:1.5}, yaxis:'y', hoverinfo:'skip'});
-  traces.push({type:'scatter', x:visDates, y:slice(d.ema_b), name:'EMA'+s.ema2, mode:'lines', line:{color:C_EMA2, width:1.5}, yaxis:'y', hoverinfo:'skip'});
-
-  if (s.sma1_on) traces.push({type:'scatter', x:visDates, y:slice(d.sma_a), name:'SMA'+s.sma1, mode:'lines', line:{color:C_SMA1, width:1.2, dash:'dot'}, yaxis:'y', hoverinfo:'skip'});
-  if (s.sma2_on) traces.push({type:'scatter', x:visDates, y:slice(d.sma_b), name:'SMA'+s.sma2, mode:'lines', line:{color:C_SMA2, width:1.2, dash:'dot'}, yaxis:'y', hoverinfo:'skip'});
-  if (s.sma3_on) traces.push({type:'scatter', x:visDates, y:slice(d.sma_c), name:'SMA'+s.sma3, mode:'lines', line:{color:C_SMA3, width:1.2, dash:'dot'}, yaxis:'y', hoverinfo:'skip'});
-  if (s.sma4_on) traces.push({type:'scatter', x:visDates, y:slice(d.sma_d), name:'SMA'+s.sma4, mode:'lines', line:{color:C_SMA4, width:1.5, dash:'dash'}, yaxis:'y', hoverinfo:'skip'});
-
-  if (show_bb) {
-    traces.push({type:'scatter', x:visDates, y:slice(d.bb_up), name:'BB Upper', mode:'lines', line:{color:C_BB, width:0.8, dash:'dot'}, yaxis:'y', fill:'none', hoverinfo:'skip'});
-    traces.push({type:'scatter', x:visDates, y:slice(d.bb_mid), name:'BB Mid', mode:'lines', line:{color:C_BB, width:0.5, dash:'dot'}, yaxis:'y', hoverinfo:'skip'});
-    traces.push({type:'scatter', x:visDates, y:slice(d.bb_low), name:'BB Lower', mode:'lines', line:{color:C_BB, width:0.8, dash:'dot'}, yaxis:'y', fill:'tonexty', fillcolor:'rgba(100,119,170,0.07)', hoverinfo:'skip'});
-  }
-
-  if (show_vol) {
-    const vcolors = visOpens.map((o, i) => (visCloses[i] != null && visCloses[i] >= o) ? UP+'88' : DN+'88');
-    traces.push({type:'bar', x:visDates, y:visVolumes, name:'Vol', marker:{color:vcolors, line:{width:0}}, yaxis:'y2', showlegend:false, hoverinfo:'x'});
-  }
-
-  if (show_rsi) {
-    const rsiSlice = slice(d.rsi);
-    traces.push({type:'scatter', x:visDates, y:rsiSlice, name:'RSI', mode:'lines', line:{color:'#aa88ff', width:1.5}, yaxis:'y3', showlegend:false, hoverinfo:'skip'});
-    traces.push({type:'scatter', x:[visDates[0], visDates[visDates.length-1]], y:[70,70], mode:'lines', line:{color:'#ff4444', width:0.8, dash:'dot'}, yaxis:'y3', showlegend:false, hoverinfo:'skip'});
-    traces.push({type:'scatter', x:[visDates[0], visDates[visDates.length-1]], y:[30,30], mode:'lines', line:{color:'#00c88a', width:0.8, dash:'dot'}, yaxis:'y3', showlegend:false, hoverinfo:'skip'});
-  }
-
-  if (show_macd) {
-    const macdSlice = slice(d.macd_hist);
-    const mcolors = macdSlice.map(h => h >= 0 ? UP : DN);
-    traces.push({type:'bar', x:visDates, y:macdSlice, name:'MACD Hist', marker:{color:mcolors, line:{width:0}}, yaxis:'y4', showlegend:false, hoverinfo:'skip'});
-    traces.push({type:'scatter', x:visDates, y:slice(d.macd_line), name:'MACD', mode:'lines', line:{color:'#00aaff', width:1.5}, yaxis:'y4', showlegend:false, hoverinfo:'skip'});
-    traces.push({type:'scatter', x:visDates, y:slice(d.macd_signal), name:'Signal', mode:'lines', line:{color:C_EMA2, width:1.2}, yaxis:'y4', showlegend:false, hoverinfo:'skip'});
-  }
-
+  if(s.sma1_on) traces.push({type:'scatter',x:_d,y:sl(d.sma_a),name:'SMA'+s.sma1,mode:'lines',line:{color:C_SMA1,width:1.2,dash:'dot'},yaxis:'y',hoverinfo:'skip'});
+  if(s.sma2_on) traces.push({type:'scatter',x:_d,y:sl(d.sma_b),name:'SMA'+s.sma2,mode:'lines',line:{color:C_SMA2,width:1.2,dash:'dot'},yaxis:'y',hoverinfo:'skip'});
+  if(s.sma3_on) traces.push({type:'scatter',x:_d,y:sl(d.sma_c),name:'SMA'+s.sma3,mode:'lines',line:{color:C_SMA3,width:1.2,dash:'dot'},yaxis:'y',hoverinfo:'skip'});
+  if(s.sma4_on) traces.push({type:'scatter',x:_d,y:sl(d.sma_d),name:'SMA'+s.sma4,mode:'lines',line:{color:C_SMA4,width:1.5,dash:'dash'},yaxis:'y',hoverinfo:'skip'});
+  if(show_bb){traces.push({type:'scatter',x:_d,y:sl(d.bb_up),name:'BB Upper',mode:'lines',line:{color:C_BB,width:0.8,dash:'dot'},yaxis:'y',fill:'none',hoverinfo:'skip'});
+    traces.push({type:'scatter',x:_d,y:sl(d.bb_mid),name:'BB Mid',mode:'lines',line:{color:C_BB,width:0.5,dash:'dot'},yaxis:'y',hoverinfo:'skip'});
+    traces.push({type:'scatter',x:_d,y:sl(d.bb_low),name:'BB Lower',mode:'lines',line:{color:C_BB,width:0.8,dash:'dot'},yaxis:'y',fill:'tonexty',fillcolor:'rgba(100,119,170,0.07)',hoverinfo:'skip'});}
+  if(show_vol){var vc=_o.map((o,i)=>(_c[i]!=null&&_c[i]>=o)?UP+'88':DN+'88');traces.push({type:'bar',x:_d,y:_v,name:'Vol',marker:{color:vc,line:{width:0}},yaxis:'y2',showlegend:false,hoverinfo:'x'});}
+  if(show_rsi){traces.push({type:'scatter',x:_d,y:sl(d.rsi),name:'RSI',mode:'lines',line:{color:'#aa88ff',width:1.5},yaxis:'y3',showlegend:false,hoverinfo:'skip'});
+    traces.push({type:'scatter',x:[_d[0],_d[_d.length-1]],y:[70,70],mode:'lines',line:{color:'#ff4444',width:0.8,dash:'dot'},yaxis:'y3',showlegend:false,hoverinfo:'skip'});
+    traces.push({type:'scatter',x:[_d[0],_d[_d.length-1]],y:[30,30],mode:'lines',line:{color:'#00c88a',width:0.8,dash:'dot'},yaxis:'y3',showlegend:false,hoverinfo:'skip'});}
+  if(show_macd){var mc=sl(d.macd_hist).map(h=>h>=0?UP:DN);traces.push({type:'bar',x:_d,y:sl(d.macd_hist),name:'MACD Hist',marker:{color:mc,line:{width:0}},yaxis:'y4',showlegend:false,hoverinfo:'skip'});
+    traces.push({type:'scatter',x:_d,y:sl(d.macd_line),name:'MACD',mode:'lines',line:{color:'#00aaff',width:1.5},yaxis:'y4',showlegend:false,hoverinfo:'skip'});
+    traces.push({type:'scatter',x:_d,y:sl(d.macd_signal),name:'Signal',mode:'lines',line:{color:C_EMA2,width:1.2},yaxis:'y4',showlegend:false,hoverinfo:'skip'});}
   return traces;
 }
 
@@ -684,9 +679,23 @@ function renderChart(d, isInitial) {
     const visSpan  = visEnd - visStart;
     const rightPad = Math.max(visSpan * 0.005, 86400000 * 2);
     currentXRange = [visStart, visEnd + rightPad];
+    console.log('=== renderChart initial ===', {
+      isInitial,
+      dataStart: d.dates[0],
+      dataEnd: d.dates[d.dates.length - 1],
+      visStart: new Date(visStart).toISOString().slice(0,10),
+      visEnd:   new Date(visEnd  ).toISOString().slice(0,10),
+      lookbackDays,
+      totalBars: d.dates.length
+    });
   } else {
     visStart = currentXRange[0];
     visEnd   = currentXRange[1];
+    console.log('=== renderChart update ===', {
+      isInitial,
+      visStart: new Date(visStart).toISOString().slice(0,10),
+      visEnd:   new Date(visEnd  ).toISOString().slice(0,10)
+    });
   }
 
   // Build traces (filtered to visible window) and layout
@@ -702,7 +711,11 @@ function renderChart(d, isInitial) {
   const chartEl = document.getElementById('chart');
   chartEl.style.width  = (containerRect.width  || 800) + 'px';
   chartEl.style.height = (containerRect.height || 500) + 'px';
-  Plotly.newPlot('chart', traces, layout, config).catch(e => setStatus('Plot error: ' + e.message));
+  Plotly.newPlot('chart', traces, layout, config).then(() => {
+    const lr = document.getElementById('chart')._fullLayout;
+    console.log('newPlot xaxis range:', JSON.stringify(lr.xaxis.range));
+    console.log('newPlot yaxis range:', JSON.stringify(lr.yaxis.range));
+  }).catch(e => setStatus('Plot error: ' + e.message));
 }
 
 
@@ -716,7 +729,7 @@ document.getElementById('refresh-btn').addEventListener('click', () => {
   const s = getSettings();
   const params = new URLSearchParams({
     ticker, tf: activeTf, refresh: 'true',
-    ema1: s.ema1, ema2: s.ema2,
+
     sma1: s.sma1, sma2: s.sma2, sma3: s.sma3, sma4: s.sma4,
     bb_window: s.bb_window, bb_std: s.bb_std,
     rsi_window: s.rsi_window,
@@ -822,6 +835,12 @@ function resizeChart() {
         'yaxis.range': [rMin - rPad, rMax + rPad],
       }).then(() => {
         setStatus(currentData.ticker + ' · ' + currentData.tf + ' · ' + currentData.dates.length + ' loaded · ' + getVisibleCount(currentData) + ' shown', true);
+    console.log('Status bar getVisibleCount:', getVisibleCount(currentData));
+    // Verify what the chart actually shows by reading back from Plotly
+    const chartData = document.getElementById('chart').data;
+    if (chartData && chartData[0] && chartData[0].x) {
+      console.log('Chart actual x.length:', chartData[0].x.length, 'first:', chartData[0].x[0], 'last:', chartData[0].x[chartData[0].x.length-1]);
+    }
       });
     }
   }, 150);
@@ -832,6 +851,12 @@ window.addEventListener('resize', () => {
     const containerRect = document.getElementById('chart-container').getBoundingClientRect();
     Plotly.relayout('chart', { width: containerRect.width, height: containerRect.height }).then(() => {
       setStatus(currentData.ticker + ' · ' + currentData.tf + ' · ' + currentData.dates.length + ' loaded · ' + getVisibleCount(currentData) + ' shown', true);
+    console.log('Status bar getVisibleCount:', getVisibleCount(currentData));
+    // Verify what the chart actually shows by reading back from Plotly
+    const chartData = document.getElementById('chart').data;
+    if (chartData && chartData[0] && chartData[0].x) {
+      console.log('Chart actual x.length:', chartData[0].x.length, 'first:', chartData[0].x[0], 'last:', chartData[0].x[chartData[0].x.length-1]);
+    }
     });
   }
 });
@@ -843,9 +868,15 @@ document.getElementById('sidebar-toggle').addEventListener('click', () => {
 
 // Mouse wheel zoom — scroll up zooms in, scroll down zooms out
 // The visible right edge (last bar + its gap) stays fixed; left edge moves
+let isWheeling = false;
+let pendingXRange = null;   // if set, loadMoreData will apply this xaxis range after updating traces
 document.getElementById('chart-area').addEventListener('wheel', function(evt) {
+  console.log('WHEEL EVENT:', evt.deltaY, 'isLoading:', isLoading);
   if (!currentData || !currentData.dates || currentData.dates.length === 0) return;
   evt.preventDefault();
+  if (isWheeling) return;   // debounce: ignore if wheel event still pending
+  isWheeling = true;
+  setTimeout(() => { isWheeling = false; }, 200);
   const dates = currentData.dates;
   const total = dates.length;
   const currentRange = currentXRange;
@@ -864,26 +895,52 @@ document.getElementById('chart-area').addEventListener('wheel', function(evt) {
   // Don't let left edge go before first data point
   const maxSpan = clampedR1 - d0;
   const cappedSpan = Math.min(newSpan, maxSpan);
-  const clampedR0 = clampedR1 - cappedSpan;
+  // Clamp left edge: if it would extend beyond available data, anchor to data start
+  // This prevents showing empty chart space before the first data bar
+  const unclampedR0 = clampedR1 - cappedSpan;
+  const clampedR0 = unclampedR0 < d0 ? d0 : unclampedR0;
 
   // Check if we need to load more data at either edge
-  // deltaY > 0: scroll down → zoom out → left edge expands → load older data
-  // deltaY < 0: scroll up → zoom in → right edge could expand if near boundary
+  // Left: scroll down → zoom out → left edge expands → fetch older data
+  // Right: scroll up (zoom in) near right boundary → fetch newer data, load more
   const loadedFrom = dataLoadedFrom || d0;
   const loadedTo   = dataLoadedTo   || lastBar;
-  const isNearLeftEdge  = (clampedR0 - loadedFrom) < (r1 - r0) * 0.1;
-  const isNearRightEdge = (loadedTo - clampedR1) < (r1 - r0) * 0.1;
+  const rightGap = loadedTo - clampedR1;
+  const leftGap  = (dataLoadedFrom || d0) - clampedR0;
+  const isNearRightEdge = rightGap < (r1 - r0) * 0.1;
 
-  if (evt.deltaY > 0 && isNearLeftEdge && currentData.loaded_from && !isLoading) {
-    loadMoreData(currentData.ticker, activeTf, -1);  // direction -1 = prepend older
-    return;
-  }
-  if (evt.deltaY < 0 && isNearRightEdge && currentData.loaded_to && !isLoading) {
-    loadMoreData(currentData.ticker, activeTf, +1);  // direction +1 = append newer
-    return;
+  // ── Load-more decision ────────────────────────────────────────────────
+  // Strategy: call loadMoreData ONLY when there's a genuine gap to fill AND
+  // more data exists. Otherwise just zoom (Plotly.relayout below).
+  //
+  // Left gap > 0  → empty space to the left of chart → need older bars
+  // Right gap > 0 → empty space to the right → need newer bars
+  //
+  // loaded_from/loaded_to = null means that edge has been confirmed exhausted.
+  // When null, skip fetch entirely and fall through to pure zoom.
+
+  // Save the desired new xaxis range (for zoom) — needed because loadMoreData
+  // will call Plotly.react which overwrites xaxis.range with savedXRange.
+  // We store it in pendingXRange and loadMoreData applies it after Plotly.react.
+  const newXRange = [clampedR0, clampedR1];
+
+  if (!isLoading) {
+    // Left — scroll down (zoom out left)
+    if (evt.deltaY > 0 && leftGap > 0 && currentData.loaded_from !== null) {
+      pendingXRange = newXRange;   // tell loadMoreData what range to use after react
+      loadMoreData(currentData.ticker, activeTf, -1);
+      return;   // loadMoreData will handle zoom when it finishes
+    }
+    // Right — scroll up (zoom in right) when near right boundary
+    else if (evt.deltaY < 0 && rightGap > 0 && currentData.loaded_to !== null) {
+      pendingXRange = newXRange;
+      loadMoreData(currentData.ticker, activeTf, +1);
+      return;
+    }
+    // Otherwise → no gap or edge confirmed exhausted → pure zoom below
   }
 
-  // Recompute Y range for the new visible X window
+  // No loadMoreData needed — pure zoom via Plotly.relayout
   let wheelMin = Infinity, wheelMax = -Infinity;
   for (let i = 0; i < dates.length; i++) {
     const t = +new Date(dates[i]);
@@ -908,7 +965,17 @@ document.getElementById('chart-area').addEventListener('wheel', function(evt) {
     'yaxis.autorange': false,
   }).then(() => {
     currentXRange = [clampedR0, clampedR1];
+    // Y-axis was recomputed from visible candles above — log it
+    const layout = document.getElementById('chart')._fullLayout;
+    console.log('Post-relayout yaxis range:', JSON.stringify(layout.yaxis.range));
+    console.log('Post-relayout xaxis range:', JSON.stringify(layout.xaxis.range));
     setStatus(currentData.ticker + ' · ' + currentData.tf + ' · ' + currentData.dates.length + ' loaded · ' + getVisibleCount(currentData) + ' shown', true);
+    console.log('Status bar getVisibleCount:', getVisibleCount(currentData));
+    // Verify what the chart actually shows by reading back from Plotly
+    const chartData = document.getElementById('chart').data;
+    if (chartData && chartData[0] && chartData[0].x) {
+      console.log('Chart actual x.length:', chartData[0].x.length, 'first:', chartData[0].x[0], 'last:', chartData[0].x[chartData[0].x.length-1]);
+    }
   });
 });
 
