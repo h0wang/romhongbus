@@ -67,6 +67,11 @@
     font-size: 12px; font-weight: 700; padding: 5px 13px; border-radius: 4px; cursor: pointer;
   }
   #load-btn:hover { opacity: 0.85; }
+  #refresh-btn {
+    background: var(--panel); color: var(--muted); border: 1px solid var(--border);
+    font-size: 14px; padding: 4px 8px; border-radius: 4px; cursor: pointer; line-height: 1;
+  }
+  #refresh-btn:hover { border-color: var(--accent); color: var(--accent); }
   .spacer { flex: 1; }
   .status { font-size: 11px; color: var(--muted); white-space: nowrap; }
   .status.ok { color: var(--green); }
@@ -176,6 +181,7 @@
     <button class="tf-btn" data-tf="monthly">Monthly</button>
   </div>
   <button id="load-btn">Load</button>
+  <button id="refresh-btn" title="Refresh data">↻</button>
   <div class="spacer"></div>
   <div class="status" id="status">Ready</div>
 </div>
@@ -368,22 +374,147 @@ function loadChart() {
     .then(d => {
       if (d.error) { setStatus('Error: ' + d.error); return; }
       currentData = d;
-      renderChart(d);
+      currentData.loaded_from = d.loaded_from || d.dates[0];
+      currentData.loaded_to   = d.loaded_to   || d.dates[d.dates.length - 1];
+      renderChart(d, true);
       setStatus(d.ticker + ' · ' + d.tf + ' · ' + d.dates.length + ' bars', true);
     })
     .catch(e => setStatus('Fetch error: ' + e.message));
 }
 
-// ── Render ───────────────────────────────────────────────────────────────────
-function renderChart(d) {
-  const s = getSettings();
-  const show_bb = s.show_bb, show_rsi = s.show_rsi;
-  const show_macd = s.show_macd, show_vol = s.show_vol;
 
+// ── Load More Data (on-demand historical append) ────────────────────────────
+async function loadMoreData(ticker, tf, visibleLeftEdge) {
+  try {
+    setStatus('Loading more…');
+    const moreResp = await fetch(`/api/chart_data/more?ticker=${encodeURIComponent(ticker)}&tf=${tf}`);
+    if (!moreResp.ok) throw new Error('No more data');
+    const more = await moreResp.json();
+    if (more.error) throw new Error(more.error);
+
+    // Find bars in more[] that are genuinely older than our current oldest
+    const curOldestTs = +new Date(currentData.dates[0]);
+    const newIndices = [];
+    for (let i = 0; i < more.dates.length; i++) {
+      if (+new Date(more.dates[i]) < curOldestTs - 86400000) {
+        newIndices.push(i);
+      }
+    }
+
+    if (newIndices.length === 0) {
+      currentData.loaded_from = null; // nothing more to fetch
+      return;
+    }
+
+    // Prepend older data to all arrays in currentData
+    const keys = ['dates','opens','highs','lows','closes','volumes',
+      'ema_a','ema_b','sma_a','sma_b','sma_c','sma_d',
+      'bb_up','bb_mid','bb_low','rsi','macd_line','macd_signal','macd_hist'];
+    keys.forEach(k => {
+      if (!more[k] || !currentData[k]) return;
+      currentData[k] = newIndices.map(i => more[k][i]).concat(currentData[k]);
+    });
+    currentData.loaded_from = currentData.dates[0];
+
+    // Re-render with prepended data, preserving current x-axis zoom
+    const s = getSettings();
+    const visStart = currentXRange[0];
+    const visEnd   = currentXRange[1];
+    // After prepending, update currentXRange[0] to include the newly loaded oldest data
+    currentXRange = [+new Date(currentData.dates[0]), currentXRange[1]];
+    const newTraces = buildChartTraces(currentData, s, visStart, visEnd);
+    const newLayout = buildChartLayout(currentData, visStart, visEnd);
+    Plotly.react('chart', newTraces, newLayout, {
+      responsive: false, displayModeBar: true,
+      modeBarButtonsToRemove: ['lasso2d','select2d'], displaylogo: false,
+    });
+    setStatus(currentData.ticker + ' · ' + currentData.tf + ' · ' + currentData.dates.length + ' bars', true);
+  } catch(e) {
+    currentData.loaded_from = null;
+    setStatus('No more data available', true);
+  }
+}
+
+// ── Render ───────────────────────────────────────────────────────────────────
+function buildChartTraces(d, s, visStart, visEnd) {
   const UP = '#00c88a', DN = '#ff4444';
   const C_EMA1 = '#00ccaa', C_EMA2 = '#ff9900';
   const C_SMA1 = '#e0e0e0', C_SMA2 = '#ff4444', C_SMA3 = '#4488ff', C_SMA4 = '#00c88a';
   const C_BB = '#6677aa';
+
+  const show_bb = s.show_bb, show_rsi = s.show_rsi;
+  const show_macd = s.show_macd, show_vol = s.show_vol;
+
+  // Filter to visible window only — this is the key fix so Plotly auto-ranges correctly
+  const visDates = [], visOpens = [], visHighs = [], visLows = [], visCloses = [], visVolumes = [];
+  for (let i = 0; i < d.dates.length; i++) {
+    const t = +new Date(d.dates[i]);
+    if (t < visStart || t > visEnd) continue;
+    visDates.push(d.dates[i]);
+    visOpens.push(d.opens[i]);
+    visHighs.push(d.highs[i]);
+    visLows.push(d.lows[i]);
+    visCloses.push(d.closes[i]);
+    visVolumes.push(d.volumes[i]);
+  }
+  // Also filter indicator arrays by the same index range
+  const idx0 = d.dates.findIndex((_, i) => +new Date(d.dates[i]) >= visStart);
+  const idx1 = d.dates.findLastIndex((_, i) => +new Date(d.dates[i]) <= visEnd);
+  const slice = arr => (idx0 >= 0 && idx1 >= idx0 && arr) ? arr.slice(idx0, idx1 + 1) : [];
+
+  const traces = [];
+
+  traces.push({
+    type: 'candlestick',
+    x: visDates, open: visOpens, high: visHighs, low: visLows, close: visCloses,
+    name: 'OHLC',
+    increasing: {line: {color: UP}, fillcolor: UP},
+    decreasing: {line: {color: DN}, fillcolor: DN},
+    yaxis: 'y', hoverinfo: 'x+y',
+  });
+
+  traces.push({type:'scatter', x:visDates, y:slice(d.ema_a), name:'EMA'+s.ema1, mode:'lines', line:{color:C_EMA1, width:1.5}, yaxis:'y', hoverinfo:'skip'});
+  traces.push({type:'scatter', x:visDates, y:slice(d.ema_b), name:'EMA'+s.ema2, mode:'lines', line:{color:C_EMA2, width:1.5}, yaxis:'y', hoverinfo:'skip'});
+
+  if (s.sma1_on) traces.push({type:'scatter', x:visDates, y:slice(d.sma_a), name:'SMA'+s.sma1, mode:'lines', line:{color:C_SMA1, width:1.2, dash:'dot'}, yaxis:'y', hoverinfo:'skip'});
+  if (s.sma2_on) traces.push({type:'scatter', x:visDates, y:slice(d.sma_b), name:'SMA'+s.sma2, mode:'lines', line:{color:C_SMA2, width:1.2, dash:'dot'}, yaxis:'y', hoverinfo:'skip'});
+  if (s.sma3_on) traces.push({type:'scatter', x:visDates, y:slice(d.sma_c), name:'SMA'+s.sma3, mode:'lines', line:{color:C_SMA3, width:1.2, dash:'dot'}, yaxis:'y', hoverinfo:'skip'});
+  if (s.sma4_on) traces.push({type:'scatter', x:visDates, y:slice(d.sma_d), name:'SMA'+s.sma4, mode:'lines', line:{color:C_SMA4, width:1.5, dash:'dash'}, yaxis:'y', hoverinfo:'skip'});
+
+  if (show_bb) {
+    traces.push({type:'scatter', x:visDates, y:slice(d.bb_up), name:'BB Upper', mode:'lines', line:{color:C_BB, width:0.8, dash:'dot'}, yaxis:'y', fill:'none', hoverinfo:'skip'});
+    traces.push({type:'scatter', x:visDates, y:slice(d.bb_mid), name:'BB Mid', mode:'lines', line:{color:C_BB, width:0.5, dash:'dot'}, yaxis:'y', hoverinfo:'skip'});
+    traces.push({type:'scatter', x:visDates, y:slice(d.bb_low), name:'BB Lower', mode:'lines', line:{color:C_BB, width:0.8, dash:'dot'}, yaxis:'y', fill:'tonexty', fillcolor:'rgba(100,119,170,0.07)', hoverinfo:'skip'});
+  }
+
+  if (show_vol) {
+    const vcolors = visOpens.map((o, i) => (visCloses[i] != null && visCloses[i] >= o) ? UP+'88' : DN+'88');
+    traces.push({type:'bar', x:visDates, y:visVolumes, name:'Vol', marker:{color:vcolors, line:{width:0}}, yaxis:'y2', showlegend:false, hoverinfo:'x'});
+  }
+
+  if (show_rsi) {
+    const rsiSlice = slice(d.rsi);
+    traces.push({type:'scatter', x:visDates, y:rsiSlice, name:'RSI', mode:'lines', line:{color:'#aa88ff', width:1.5}, yaxis:'y3', showlegend:false, hoverinfo:'skip'});
+    traces.push({type:'scatter', x:[visDates[0], visDates[visDates.length-1]], y:[70,70], mode:'lines', line:{color:'#ff4444', width:0.8, dash:'dot'}, yaxis:'y3', showlegend:false, hoverinfo:'skip'});
+    traces.push({type:'scatter', x:[visDates[0], visDates[visDates.length-1]], y:[30,30], mode:'lines', line:{color:'#00c88a', width:0.8, dash:'dot'}, yaxis:'y3', showlegend:false, hoverinfo:'skip'});
+  }
+
+  if (show_macd) {
+    const macdSlice = slice(d.macd_hist);
+    const mcolors = macdSlice.map(h => h >= 0 ? UP : DN);
+    traces.push({type:'bar', x:visDates, y:macdSlice, name:'MACD Hist', marker:{color:mcolors, line:{width:0}}, yaxis:'y4', showlegend:false, hoverinfo:'skip'});
+    traces.push({type:'scatter', x:visDates, y:slice(d.macd_line), name:'MACD', mode:'lines', line:{color:'#00aaff', width:1.5}, yaxis:'y4', showlegend:false, hoverinfo:'skip'});
+    traces.push({type:'scatter', x:visDates, y:slice(d.macd_signal), name:'Signal', mode:'lines', line:{color:C_EMA2, width:1.2}, yaxis:'y4', showlegend:false, hoverinfo:'skip'});
+  }
+
+  return traces;
+}
+
+
+function buildChartLayout(d, visStart, visEnd) {
+  const s = getSettings();
+  const show_bb = s.show_bb, show_rsi = s.show_rsi;
+  const show_macd = s.show_macd, show_vol = s.show_vol;
 
   const activeRows = ['main'];
   if (show_vol)  activeRows.push('vol');
@@ -427,70 +558,47 @@ function renderChart(d) {
     tickfont: {color: '#666', size: 10}, rangeslider: {visible: true, thickness: 0.06}, spikecolor: '#333',
   };
 
-  const traces = [];
-
-  traces.push({
-    type: 'candlestick',
-    x: d.dates, open: d.opens, high: d.highs, low: d.lows, close: d.closes,
-    name: 'OHLC',
-    increasing: {line: {color: UP}, fillcolor: UP},
-    decreasing: {line: {color: DN}, fillcolor: DN},
-    yaxis: 'y', hoverinfo: 'x+y',
-  });
-
-  traces.push({type:'scatter', x:d.dates, y:d.ema_a, name:'EMA'+s.ema1, mode:'lines', line:{color:C_EMA1, width:1.5}, yaxis:'y', hoverinfo:'skip'});
-  traces.push({type:'scatter', x:d.dates, y:d.ema_b, name:'EMA'+s.ema2, mode:'lines', line:{color:C_EMA2, width:1.5}, yaxis:'y', hoverinfo:'skip'});
-
-  if (s.sma1_on) traces.push({type:'scatter', x:d.dates, y:d.sma_a, name:'SMA'+s.sma1, mode:'lines', line:{color:C_SMA1, width:1.2, dash:'dot'}, yaxis:'y', hoverinfo:'skip'});
-  if (s.sma2_on) traces.push({type:'scatter', x:d.dates, y:d.sma_b, name:'SMA'+s.sma2, mode:'lines', line:{color:C_SMA2, width:1.2, dash:'dot'}, yaxis:'y', hoverinfo:'skip'});
-  if (s.sma3_on) traces.push({type:'scatter', x:d.dates, y:d.sma_c, name:'SMA'+s.sma3, mode:'lines', line:{color:C_SMA3, width:1.2, dash:'dot'}, yaxis:'y', hoverinfo:'skip'});
-  if (s.sma4_on) traces.push({type:'scatter', x:d.dates, y:d.sma_d, name:'SMA'+s.sma4, mode:'lines', line:{color:C_SMA4, width:1.5, dash:'dash'}, yaxis:'y', hoverinfo:'skip'});
-
-  if (show_bb) {
-    traces.push({type:'scatter', x:d.dates, y:d.bb_up, name:'BB Upper', mode:'lines', line:{color:C_BB, width:0.8, dash:'dot'}, yaxis:'y', fill:'none', hoverinfo:'skip'});
-    traces.push({type:'scatter', x:d.dates, y:d.bb_mid, name:'BB Mid', mode:'lines', line:{color:C_BB, width:0.5, dash:'dot'}, yaxis:'y', hoverinfo:'skip'});
-    traces.push({type:'scatter', x:d.dates, y:d.bb_low, name:'BB Lower', mode:'lines', line:{color:C_BB, width:0.8, dash:'dot'}, yaxis:'y', fill:'tonexty', fillcolor:'rgba(100,119,170,0.07)', hoverinfo:'skip'});
-  }
-
-  if (show_vol) {
-    const vcolors = d.opens.map((o, i) => (d.closes[i] != null && d.closes[i] >= o) ? UP+'88' : DN+'88');
-    traces.push({type:'bar', x:d.dates, y:d.volumes, name:'Vol', marker:{color:vcolors, line:{width:0}}, yaxis:'y2', showlegend:false, hoverinfo:'x'});
-  }
-
-  if (show_rsi) {
-    traces.push({type:'scatter', x:d.dates, y:d.rsi, name:'RSI', mode:'lines', line:{color:'#aa88ff', width:1.5}, yaxis:'y3', showlegend:false, hoverinfo:'skip'});
-    traces.push({type:'scatter', x:[d.dates[0], d.dates[d.dates.length-1]], y:[70,70], mode:'lines', line:{color:'#ff4444', width:0.8, dash:'dot'}, yaxis:'y3', showlegend:false, hoverinfo:'skip'});
-    traces.push({type:'scatter', x:[d.dates[0], d.dates[d.dates.length-1]], y:[30,30], mode:'lines', line:{color:'#00c88a', width:0.8, dash:'dot'}, yaxis:'y3', showlegend:false, hoverinfo:'skip'});
-  }
-
-  if (show_macd) {
-    const mcolors = d.macd_hist.map(h => h >= 0 ? UP : DN);
-    traces.push({type:'bar', x:d.dates, y:d.macd_hist, name:'MACD Hist', marker:{color:mcolors, line:{width:0}}, yaxis:'y4', showlegend:false, hoverinfo:'skip'});
-    traces.push({type:'scatter', x:d.dates, y:d.macd_line, name:'MACD', mode:'lines', line:{color:'#00aaff', width:1.5}, yaxis:'y4', showlegend:false, hoverinfo:'skip'});
-    traces.push({type:'scatter', x:d.dates, y:d.macd_signal, name:'Signal', mode:'lines', line:{color:C_EMA2, width:1.2}, yaxis:'y4', showlegend:false, hoverinfo:'skip'});
-  }
-
-  const shapes = [];
-
-  // Force synchronous layout recalc so containerRect is accurate
-  const chartArea = document.getElementById('chart-area');
-  void chartArea.offsetHeight;
   const containerRect = document.getElementById('chart-container').getBoundingClientRect();
-  const d0 = d.dates[0], d1 = d.dates[d.dates.length - 1];
-  // Visible lookback window per timeframe (before last bar)
-  const lookbackDays = d.tf === 'monthly' ? 365 * 15 : d.tf === 'weekly' ? 365 * 5 : 365 * 2;
-  const lookbackMs = lookbackDays * 86400000;
-  const d1ts = +new Date(d1);
-  const d0ts = +new Date(d0);
-  // Full range: all loaded data (for scrolling back)
-  const fullSpan = d1ts - d0ts;
-  const rightPad = Math.max(fullSpan * 0.05, 86400000 * 3);
-  // Visible range: last 2/5/15 years + right padding
-  const visibleStart = new Date(Math.max(d0ts, d1ts - lookbackMs)).toISOString().slice(0, 10);
-  const visibleEnd = new Date(d1ts + rightPad).toISOString().slice(0, 10);
-  const xaxisRange = [visibleStart, visibleEnd];
-  // currentXRange stores full range so wheel zoom can scroll back through all loaded data
-  currentXRange = [d0ts, d1ts + rightPad];
+
+  // Visible X window — passed in from renderChart
+  const visibleStartISO = new Date(visStart).toISOString().slice(0, 10);
+  const visibleEndISO   = new Date(visEnd).toISOString().slice(0, 10);
+  const xaxisRange = [visibleStartISO, visibleEndISO];
+
+  // Compute Y range from visible candle highs/lows
+  let eMin = Infinity, eMax = -Infinity;
+  for (let i = 0; i < d.dates.length; i++) {
+    const t = +new Date(d.dates[i]);
+    if (t < visStart || t > visEnd) continue;
+    if (d.highs[i] != null) eMax = Math.max(eMax, d.highs[i]);
+    if (d.lows[i]  != null) eMin = Math.min(eMin, d.lows[i]);
+  }
+  const priceSpan = eMax - eMin || eMax * 0.01;
+  const yPad = priceSpan * 0.08;
+  const yRange = [
+    Math.log10(Math.max(0.001, eMin - yPad)),   // log scale: range in log10 space
+    Math.log10(eMax + yPad),
+  ];
+  const yRangeLinear = [Math.max(0.001, eMin - yPad), eMax + yPad];  // linear scale
+  const useYRange = useLog ? yRange : yRangeLinear;
+
+  // Build dynamic tick labels for the Y axis
+  // On log scale: generate tickvals in log10-space with actual $ labels
+  // On linear scale: use auto ticks
+  let yTickvals, yTicktext;
+  if (useLog) {
+    // Find a nice round starting price <= eMin and generate ticks at fixed $ intervals
+    const start = Math.floor(eMin / 50) * 50;  // e.g. 450
+    const tickInterval = 25;  // every $25
+    const ticks = [];
+    for (let p = start; p <= eMax + 50; p += tickInterval) ticks.push(p);
+    // Convert to log10 for tickvals, keep as-is for ticktext
+    yTickvals = ticks.map(Math.log10);   // log10(price) — correct for log-axis tickmode array
+    yTicktext = ticks.map(p => p >= 1000 ? ('$' + (p/1000).toFixed(p % 100 === 0 ? 0 : 1) + 'k') : ('$' + p));
+  }
+
+  console.log('Y range:', { visStartISO: visibleStartISO, visEndISO: visibleEndISO, eMin: Math.round(eMin), eMax: Math.round(eMax), yRangeLinear: yRangeLinear.map(v => Math.round(v)), logScale: useLog, yTicktext: useLog ? yTicktext : 'auto' });
+
   const layout = {
     paper_bgcolor: '#0d0d0d', plot_bgcolor: '#0d0d0d',
     font: {color: '#e0e0e0', size: 11, family: 'Segoe UI, Arial'},
@@ -505,29 +613,83 @@ function renderChart(d) {
       ...layoutAxes['xaxis'],
       range: xaxisRange,
     },
-    // Force y-axis to cover only the actual price range
     yaxis: {
       ...layoutAxes['yaxis'],
-      rangemode: 'normal',
+      range: useYRange,
+      autorange: false,
+      tickmode: useLog ? 'array' : 'auto',
+      tickvals: useLog ? yTickvals : undefined,
+      ticktext: useLog ? yTicktext : undefined,
     },
-    shapes,
   };
+  return layout;
+}
+
+function renderChart(d, isInitial) {
+  const s = getSettings();
+
+  // Determine visible X window
+  let visStart, visEnd;
+  if (isInitial) {
+    const d0ts = +new Date(d.dates[0]);
+    const d1ts = +new Date(d.dates[d.dates.length - 1]);
+    const lookbackDays = d.tf === 'monthly' ? 365 * 15 : d.tf === 'weekly' ? 365 * 5 : 365 * 2;
+    const lookbackMs  = lookbackDays * 86400000;
+    visStart = Math.max(d0ts, d1ts - lookbackMs);
+    visEnd   = d1ts;
+    const visSpan  = visEnd - visStart;
+    const rightPad = Math.max(visSpan * 0.005, 86400000 * 2);
+    currentXRange = [visStart, visEnd + rightPad];
+  } else {
+    visStart = currentXRange[0];
+    visEnd   = currentXRange[1];
+  }
+
+  // Build traces (filtered to visible window) and layout
+  const traces = buildChartTraces(d, s, visStart, visEnd);
+  const layout = buildChartLayout(d, visStart, visEnd);
 
   const config = {
     responsive: false, displayModeBar: true,
     modeBarButtonsToRemove: ['lasso2d', 'select2d'], displaylogo: false,
   };
-
   Plotly.purge('chart');
-  // Ensure the chart div has the correct inline dimensions before Plotly renders
+  const containerRect = document.getElementById('chart-container').getBoundingClientRect();
   const chartEl = document.getElementById('chart');
-  chartEl.style.width = (containerRect.width || 800) + 'px';
+  chartEl.style.width  = (containerRect.width  || 800) + 'px';
   chartEl.style.height = (containerRect.height || 500) + 'px';
   Plotly.newPlot('chart', traces, layout, config).catch(e => setStatus('Plot error: ' + e.message));
 }
 
+
+
 // ── Events ─────────────────────────────────────────────────────────────────
 document.getElementById('load-btn').addEventListener('click', loadChart);
+document.getElementById('refresh-btn').addEventListener('click', () => {
+  const ticker = document.getElementById('ticker-input').value.trim().toUpperCase();
+  if (!ticker || !currentData) return;
+  setStatus('Refreshing…');
+  const s = getSettings();
+  const params = new URLSearchParams({
+    ticker, tf: activeTf, refresh: 'true',
+    ema1: s.ema1, ema2: s.ema2,
+    sma1: s.sma1, sma2: s.sma2, sma3: s.sma3, sma4: s.sma4,
+    bb_window: s.bb_window, bb_std: s.bb_std,
+    rsi_window: s.rsi_window,
+    macd_fast: s.macd_fast, macd_slow: s.macd_slow, macd_signal: s.macd_signal,
+  });
+  fetch('/api/chart_data?' + params)
+    .then(r => r.json())
+    .then(d => {
+      if (d.error) { setStatus('Refresh error: ' + d.error); return; }
+      currentData = d;
+      currentData.loaded_from = d.loaded_from || d.dates[0];
+      currentData.loaded_to   = d.loaded_to   || d.dates[d.dates.length - 1];
+      renderChart(d, true);
+      setStatus(d.ticker + ' · ' + d.tf + ' · ' + d.dates.length + ' bars (refreshed)', true);
+    })
+    .catch(e => setStatus('Refresh error: ' + e.message));
+});
 document.getElementById('ticker-input').addEventListener('keydown', e => { if (e.key === 'Enter') loadChart(); });
 
 document.querySelectorAll('.tf-btn').forEach(btn => {
@@ -548,8 +710,8 @@ document.querySelectorAll('.tf-btn').forEach(btn => {
  'vol_h','rsi_h','macd_h'].forEach(id => {
   const el = document.getElementById(id);
   if (!el) return;
-  el.addEventListener('change', () => { if (currentData) renderChart(currentData); });
-  el.addEventListener('input',   () => { if (currentData) renderChart(currentData); });
+  el.addEventListener('change', () => { if (currentData) renderChart(currentData, false); });
+  el.addEventListener('input',   () => { if (currentData) renderChart(currentData, false); });
 });
 
 fetch('/api/watchlist').then(r => r.json()).then(buildSidebar).catch(() => {
@@ -564,7 +726,7 @@ document.getElementById('portfolio-select').addEventListener('change', function(
     document.getElementById('portfolio-info').textContent = '';
     // Restore full watchlist sidebar
     if (watchlistData) renderSidebar(watchlistData);
-    if (currentData) renderChart(currentData);
+    if (currentData) renderChart(currentData, false);
     setTimeout(resizeChart, 250);
     return;
   }
@@ -593,11 +755,28 @@ document.getElementById('portfolio-select').addEventListener('change', function(
 // Trigger chart resize after DOM changes (sidebar toggle, portfolio switch)
 function resizeChart() {
   setTimeout(() => {
-    if (document.getElementById('chart').data) {
+    if (document.getElementById('chart').data && currentData) {
       const chartArea = document.getElementById('chart-area');
       void chartArea.offsetHeight;
       const containerRect = document.getElementById('chart-container').getBoundingClientRect();
-      Plotly.relayout('chart', { width: containerRect.width, height: containerRect.height });
+      // Recompute Y range to visible candles
+      const xRange = currentXRange || [
+        +new Date(currentData.dates[0]),
+        +new Date(currentData.dates[currentData.dates.length - 1])
+      ];
+      let rMin = Infinity, rMax = -Infinity;
+      for (let i = 0; i < currentData.dates.length; i++) {
+        const t = +new Date(currentData.dates[i]);
+        if (t < xRange[0] || t > xRange[1]) continue;
+        if (currentData.highs[i] != null) rMax = Math.max(rMax, currentData.highs[i]);
+        if (currentData.lows[i]  != null) rMin = Math.min(rMin, currentData.lows[i]);
+      }
+      const rSpan = rMax - rMin || rMax * 0.01;
+      const rPad  = rSpan * 0.08;
+      Plotly.relayout('chart', {
+        width: containerRect.width, height: containerRect.height,
+        'yaxis.range': [rMin - rPad, rMax + rPad],
+      });
     }
   }, 150);
 }
@@ -639,10 +818,41 @@ document.getElementById('chart-area').addEventListener('wheel', function(evt) {
   const cappedSpan = Math.min(newSpan, maxSpan);
   const clampedR0 = clampedR1 - cappedSpan;
 
+  // Check if scrolling left near the left edge of loaded data — trigger load-more
+  const loadedFrom = currentData.loaded_from ? +new Date(currentData.loaded_from) : d0;
+  const isNearLeftEdge = (clampedR0 - loadedFrom) < (r1 - r0) * 0.1;
+  const isScrollingLeft = evt.deltaY > 0;
+
   function tsToDateStr(ts) {
     return new Date(ts).toISOString().slice(0, 10);
   }
-  Plotly.relayout('chart', { 'xaxis.range': [tsToDateStr(clampedR0), tsToDateStr(clampedR1)] }).then(() => {
+
+  if (isScrollingLeft && isNearLeftEdge && currentData.loaded_from) {
+    // Fetch more historical data and prepend
+    loadMoreData(currentData.ticker, activeTf, clampedR0);
+    return;
+  }
+
+  // Recompute Y range for the new visible X window
+  let wheelMin = Infinity, wheelMax = -Infinity;
+  for (let i = 0; i < dates.length; i++) {
+    const t = +new Date(dates[i]);
+    if (t < clampedR0 || t > clampedR1) continue;
+    if (currentData.highs[i] != null) wheelMax = Math.max(wheelMax, currentData.highs[i]);
+    if (currentData.lows[i]  != null) wheelMin = Math.min(wheelMin, currentData.lows[i]);
+  }
+  const wheelSpan = wheelMax - wheelMin || wheelMax * 0.01;
+  const wheelPad  = wheelSpan * 0.08;
+  const useLog = document.getElementById('log_scale').checked;
+  const wheelYRange = useLog
+    ? [Math.log10(Math.max(0.001, wheelMin - wheelPad)), Math.log10(wheelMax + wheelPad)]
+    : [Math.max(0.001, wheelMin - wheelPad), wheelMax + wheelPad];
+
+  Plotly.relayout('chart', {
+    'xaxis.range': [tsToDateStr(clampedR0), tsToDateStr(clampedR1)],
+    'yaxis.range': wheelYRange,
+    'yaxis.autorange': false,
+  }).then(() => {
     currentXRange = [clampedR0, clampedR1];
   });
 });
