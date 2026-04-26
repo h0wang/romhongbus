@@ -253,6 +253,152 @@ def chart_data_more():
 # ── Watchlist API ────────────────────────────────────────────────────────────
 
 # ── Portfolio Performance API ────────────────────────────────────────────────
+def _irish_performance():
+    """Build equity curve for the Irish portfolio from its transaction CSV."""
+    import csv
+    from collections import defaultdict
+    from datetime import datetime, timedelta
+    import yfinance as yf
+    import json as _json
+
+    CSV_PATH = "/home/clawpi/.openclaw/data/portfolios/TransactionHistory-Irish.csv"
+    PORT_PATH = "/home/clawpi/.openclaw/data/portfolios/portfolio_irish_latest.json"
+
+    # ── 1. Parse CSV ────────────────────────────────────────────────────────
+    trades = []    # [{date, ticker, action, qty, gbp}]
+    cash_flows = []  # [{date, gbp}]
+    tickers = set()
+    stored_prices = {}   # ticker -> GBP per-share cost (for GBX normalisation)
+
+    with open(CSV_PATH, newline='', encoding='utf-8') as f:
+        for row in csv.DictReader(f):
+            date   = row.get('Date', '').strip()
+            action = row.get('Action', '').strip().upper()
+            ticker = row.get('Ticker', '').strip()
+            qty    = float(row.get('Quantity', '0') or 0)
+            gbp    = float(row.get('GBP', '0') or 0)
+
+            if action == 'DEPOSIT':
+                cash_flows.append({'date': date, 'gbp': gbp})
+            elif action == 'BUY' and ticker:
+                tickers.add(ticker)
+                trades.append({'date': date, 'ticker': ticker, 'action': 'BUY', 'qty': qty, 'gbp': abs(gbp)})
+                # Store per-share price in GBP for GBX normalisation
+                price_str = row.get('Price', '').strip()
+                if price_str and price_str != '0':
+                    stored_prices[ticker] = float(price_str)
+            elif action == 'SELL' and ticker:
+                tickers.add(ticker)
+                trades.append({'date': date, 'ticker': ticker, 'action': 'SELL', 'qty': qty, 'gbp': abs(gbp)})
+
+    if not trades:
+        return jsonify({"error": "No trades found for Irish"}), 404
+
+    trades.sort(key=lambda x: x['date'])
+    cash_flows.sort(key=lambda x: x['date'])
+    tickers = sorted(tickers)
+    start_date = trades[0]['date']
+    end_date   = datetime.now().strftime('%Y-%m-%d')
+
+    # ── 2. Fetch historical prices (weekly) ─────────────────────────────────
+    price_data = {}
+    for tk in tickers:
+        try:
+            adj = yf.Ticker(tk).history(start=start_date, end=end_date, interval="1wk", auto_adjust=True)
+            for ts, row in adj.iterrows():
+                ds = str(ts.date())
+                price_data.setdefault(tk, {})[ds] = float(row['Close'])
+        except Exception:
+            pass
+
+    # ── 3. Build weekly curve ───────────────────────────────────────────────
+    positions  = defaultdict(lambda: {'qty': 0, 'cost_gbp': 0.0})
+    divs_received = 0.0
+    net_invested  = 0.0
+    account_cash  = 0.0
+    curve = []
+    trade_idx  = 0
+    cash_idx   = 0
+
+    cursor = datetime.strptime(min(trades[0]['date'] for t in trades), '%Y-%m-%d')
+    end    = datetime.strptime(end_date, '%Y-%m-%d')
+    while cursor.weekday() != 4:
+        cursor += timedelta(days=1)
+
+    while cursor <= end:
+        week_end = cursor.strftime('%Y-%m-%d')
+
+        while trade_idx < len(trades) and trades[trade_idx]['date'] <= week_end:
+            tr = trades[trade_idx]
+            trade_idx += 1
+            if tr['action'] == 'BUY':
+                positions[tr['ticker']]['qty']      += tr['qty']
+                positions[tr['ticker']]['cost_gbp'] += tr['gbp']
+                account_cash -= tr['gbp']
+            elif tr['action'] == 'SELL':
+                pos = positions[tr['ticker']]
+                if pos['qty'] > 0:
+                    avg = pos['cost_gbp'] / pos['qty']
+                    sell_qty = min(tr['qty'], pos['qty'])
+                    account_cash += sell_qty * avg
+                    pos['qty']      -= sell_qty
+                    pos['cost_gbp'] -= sell_qty * avg
+            elif tr['action'] == 'DIV':
+                divs_received += tr['gbp']
+                account_cash  += tr['gbp']
+
+        while cash_idx < len(cash_flows) and cash_flows[cash_idx]['date'] <= week_end:
+            net_invested += cash_flows[cash_idx]['gbp']
+            account_cash  += cash_flows[cash_idx]['gbp']
+            cash_idx += 1
+
+        # Portfolio value at week-end
+        total_value = 0.0
+        for tk, pos in positions.items():
+            if pos['qty'] > 0:
+                prices = price_data.get(tk, {})
+                if prices:
+                    past = sorted((d for d in prices if d <= week_end), reverse=True)
+                    if past:
+                        cur_price = prices[past[0]]
+                        # GBX stocks (price in pence) need /100 to convert to GBP
+                        stored_price = stored_prices.get(tk, cur_price)
+                        if stored_price > 0 and cur_price > stored_price * 10:
+                            cur_price = cur_price / 100
+                        total_value += pos['qty'] * cur_price
+
+        ret = (total_value + account_cash) / net_invested if net_invested > 0 else 0
+        curve.append({
+            'date':   week_end,
+            'return': round(ret, 4),
+            'value':  round(total_value + account_cash, 2),
+        })
+
+        cursor += timedelta(days=7)
+
+    # ── 4. Override last point with portfolio JSON ───────────────────────────
+    try:
+        with open(PORT_PATH) as f:
+            port = _json.load(f)
+        holdings_now = {h['ticker']: h for h in port.get('holdings', [])}
+        cur_equity = sum(h.get('value_gbp', 0) for h in holdings_now.values())
+        cur_cash   = port['account'].get('cash_gbp', 0) or 0
+        last_date  = curve[-1]['date'] if curve else end_date
+        cur_net_inv = sum(cf['gbp'] for cf in cash_flows if cf['date'] <= last_date)
+        if curve:
+            curve[-1]['return'] = round((cur_equity + cur_cash) / cur_net_inv, 4) if cur_net_inv > 0 else 0
+            curve[-1]['value']   = round(cur_equity + cur_cash, 2)
+    except Exception:
+        pass
+
+    return jsonify({
+        'tickers':      tickers,
+        'start':        start_date,
+        'net_invested': round(net_invested, 2),
+        'curve':        curve,
+    })
+
+
 @app.route("/api/portfolio/performance")
 def api_portfolio_performance():
     """
@@ -265,8 +411,9 @@ def api_portfolio_performance():
     from datetime import datetime, timedelta
 
     key = request.args.get("key", "").strip()
+
     if key == "irish":
-        return jsonify({"error": "No transaction history available for Irish portfolio"}), 400
+        return _irish_performance()
 
     if key != "ignite":
         return jsonify({"error": "Unknown portfolio: " + key}), 400
@@ -357,9 +504,10 @@ def api_portfolio_performance():
     dates = sorted(set(t['date'] for t in trades))
 
     # Walk through chronologically, track positions, sample portfolio value weekly
-    positions = defaultdict(lambda: {'qty': 0, 'cost_gbp': 0.0})
+    positions  = defaultdict(lambda: {'qty': 0, 'cost_gbp': 0.0})
     divs_received = 0.0
     net_invested  = 0.0   # cumulative cash in via card payments + FX
+    account_cash  = 0.0   # actual cash in the account at this point
     curve = []   # [{date, return, value}]
     trade_idx  = 0
     cash_idx   = 0
@@ -381,18 +529,24 @@ def api_portfolio_performance():
             if tr['action'] == 'BUY':
                 positions[tr['ticker']]['qty']      += tr['qty']
                 positions[tr['ticker']]['cost_gbp'] += tr['gbp']
+                account_cash -= tr['gbp']   # cash pays for the buy
             elif tr['action'] == 'SELL':
                 pos = positions[tr['ticker']]
                 if pos['qty'] > 0:
                     avg = pos['cost_gbp'] / pos['qty']
-                    pos['qty']      -= min(tr['qty'], pos['qty'])
-                    pos['cost_gbp'] -= min(tr['qty'], pos['qty']) * avg
+                    sell_qty = min(tr['qty'], pos['qty'])
+                    sell_proceeds = sell_qty * avg   # GBP received from sale
+                    account_cash += sell_proceeds
+                    pos['qty']      -= sell_qty
+                    pos['cost_gbp'] -= sell_qty * avg
             elif tr['action'] == 'DIV':
                 divs_received += tr['gbp']
+                account_cash += tr['gbp']   # dividend adds to cash
 
         # Apply cash flows (card payments + FX) up to this week
         while cash_idx < len(cash_flows) and cash_flows[cash_idx]['date'] <= week_end:
             net_invested += cash_flows[cash_idx]['gbp']
+            account_cash  += cash_flows[cash_idx]['gbp']
             cash_idx += 1
 
         # Portfolio value at this week-end using historical prices
@@ -405,13 +559,15 @@ def api_portfolio_performance():
                     if past:
                         total_value += positions[tk]['qty'] * prices[past[0]] / RATE
 
-        # Return = (holdings value + divs) / cumulative net cash invested
-        # Excludes card payment impact from the denominator
-        ret = (total_value + divs_received) / net_invested if net_invested > 0 else 0
+        # Cash in the account at this week-end (card deposits accumulated, net of trades)
+        # cash = net_invested - sum of all BUY costs (since card deposits go to cash, trades deduct from it)
+        account_cash = net_invested - sum(p['cost_gbp'] for p in positions.values())
+        # Return = (holdings value + cash + divs) / net invested
+        ret = (total_value + account_cash + divs_received) / net_invested if net_invested > 0 else 0
         curve.append({
             'date':   week_end,
             'return': round(ret, 4),
-            'value':  round(total_value + divs_received, 2),
+            'value':  round(total_value + account_cash + divs_received, 2),
         })
 
         cursor += timedelta(days=7)
@@ -422,13 +578,13 @@ def api_portfolio_performance():
             port = json.load(f)
         holdings_now = {h["ticker"]: h for h in port.get("holdings", [])}
         cur_equity   = sum(h.get("cur_val_gbp", 0) for h in holdings_now.values())
+        cur_cash     = port.get("cash_gbp", 0) or 0
         cur_divs     = port.get("total_divs_gbp", 0) or 0
-        # Recalculate cumulative net invested from all cash flows
         last_date = curve[-1]["date"] if curve else end_date
         cur_net_inv = sum(cf["gbp"] for cf in cash_flows if cf["date"] <= last_date)
         if curve:
-            curve[-1]["return"] = round((cur_equity + cur_divs) / cur_net_inv, 4) if cur_net_inv > 0 else 0
-            curve[-1]["value"]   = round(cur_equity + cur_divs, 2)
+            curve[-1]["return"] = round((cur_equity + cur_cash + cur_divs) / cur_net_inv, 4) if cur_net_inv > 0 else 0
+            curve[-1]["value"]   = round(cur_equity + cur_cash + cur_divs, 2)
     except Exception:
         pass
 

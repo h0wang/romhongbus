@@ -301,9 +301,9 @@
     <input id="ticker-input" type="text" value="SPY" placeholder="e.g. DGE.L" autocomplete="off" spellcheck="false">
   </div>
   <div class="tf-tabs">
-    <button class="tf-btn active" data-tf="daily">Daily</button>
+    <button class="tf-btn" data-tf="daily">Daily</button>
     <button class="tf-btn" data-tf="weekly">Weekly</button>
-    <button class="tf-btn" data-tf="monthly">Monthly</button>
+    <button class="tf-btn active" data-tf="monthly">Monthly</button>
   </div>
   <button id="load-btn">Load</button>
   <button id="refresh-btn" title="Refresh data">↻</button>
@@ -376,10 +376,10 @@
 </div>
 
 <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
-<script data-ts="1777155544">
+<script data-ts="1777192384">
 // ── State ──────────────────────────────────────────────────────────────────
 let currentData   = null;
-let activeTf      = 'daily';
+let activeTf      = 'monthly';
 let activeTicker  = null;
 let portfolioData = null;       // loaded portfolio data
 let currentXRange = null;       // tracks current xaxis range for wheel zoom
@@ -1093,13 +1093,14 @@ function renderPerfModal(data) {
   if (!curve.length) return;
 
   var dates  = curve.map(function(c) { return c.date; });
-  var values = curve.map(function(c) { return c.value; });
+  // Plot return as percentage (1.1722 → 117.22%)
+  var returns = curve.map(function(c) { return (c.return || 0) * 100 - 100; });
 
-  // Trace 1: portfolio value
-  var traceVal = {
+  // Trace: % return
+  var traceReturn = {
     type: 'scatter',
-    x: dates, y: values,
-    mode: 'lines', name: 'Value',
+    x: dates, y: returns,
+    mode: 'lines', name: 'Return %',
     line: { color: '#00ccaa', width: 2 },
     fill: 'tonexty', fillcolor: 'rgba(0,204,170,0.08)',
     hoverinfo: 'x+y',
@@ -1116,36 +1117,40 @@ function renderPerfModal(data) {
     yaxis: {
       gridcolor: '#222', linecolor: '#333', mirror: true,
       tickfont: { color: '#888', size: 10 },
-      tickprefix: '£', hoverformat: ',.0f',
-      type: 'log', domain: [0, 1],
+      tickformat: '+.0f',   // e.g. +20%, +50%, -10%
+      hoverformat: '+.1f',   // e.g. +17.2%
+      rangemode: 'tozero',
+      domain: [0, 1],
     },
+    shapes: [{
+      type: 'line', xref: 'paper', x0: 0, x1: 1,
+      yref: 'y', y0: 0, y1: 0,
+      line: { color: '#555', width: 1, dash: 'dot' },
+    }],
     legend: { orientation: 'h', x: 0.5, xanchor: 'center', y: 1.02 },
     margin: { t: 10, b: 40, l: 60, r: 20 },
     showlegend: true,
   };
 
-  Plotly.newPlot('perf-chart', [traceVal], layout, {
+  Plotly.newPlot('perf-chart', [traceReturn], layout, {
     responsive: true, displayModeBar: false, displaylogo: false,
   });
 
-  // Stats
-  var first = values[0];
-  var last  = values[values.length - 1];
-  var peak  = Math.max.apply(null, values);
-  var trough= Math.min.apply(null, values);
-  var gain  = last - first;
-  var retPct= first > 0 ? ((last - first) / first * 100) : 0;
-  var maxDD = first > 0 ? ((trough - peak) / peak * 100) : 0;
+  // Stats — use return field directly from API
+  var firstRet = returns[0];
+  var lastRet  = returns[returns.length - 1];
+  var peakRet  = Math.max.apply(null, returns);
+  var troughRet= Math.min.apply(null, returns);
+  var maxDD    = peakRet > 0 ? (troughRet - peakRet) : 0;
 
   var posNeg = function(v) { return v >= 0 ? 'pos' : 'neg'; };
-  var fmtGbp = function(v) { return '£' + Math.abs(v).toLocaleString('en-GB', {minimumFractionDigits:0,maximumFractionDigits:0}); };
   var fmtPct = function(v) { return (v >= 0 ? '+' : '−') + Math.abs(v).toFixed(1) + '%'; };
 
   document.getElementById('perf-stats').innerHTML =
-    '<div class="perf-stat"><div class="perf-stat-val">' + fmtGbp(last) + '</div><div class="perf-stat-lbl">Value</div></div>' +
-    '<div class="perf-stat"><div class="perf-stat-val ' + posNeg(gain) + '">' + fmtPct(retPct) + '</div><div class="perf-stat-lbl">Total Return</div></div>' +
+    '<div class="perf-stat"><div class="perf-stat-val">' + fmtPct(lastRet) + '</div><div class="perf-stat-lbl">Total Return</div></div>' +
+    '<div class="perf-stat"><div class="perf-stat-val ' + posNeg(lastRet) + '">' + fmtPct(lastRet) + '</div><div class="perf-stat-lbl">vs Start</div></div>' +
     '<div class="perf-stat"><div class="perf-stat-val neg">' + fmtPct(maxDD) + '</div><div class="perf-stat-lbl">Max Drawdown</div></div>' +
-    '<div class="perf-stat"><div class="perf-stat-val">' + fmtGbp(last - first) + '</div><div class="perf-stat-lbl">P&amp;L</div></div>';
+    '<div class="perf-stat"><div class="perf-stat-val">' + fmtPct(peakRet) + '</div><div class="perf-stat-lbl">Peak</div></div>';
 
   document.getElementById('perf-footer').textContent =
     'Ignite portfolio · since ' + data.start + ' · ' + data.tickers.join(', ');
