@@ -283,10 +283,12 @@ def _irish_performance():
             elif action == 'BUY' and ticker:
                 tickers.add(ticker)
                 trades.append({'date': date, 'ticker': ticker, 'action': 'BUY', 'qty': qty, 'gbp': abs(gbp)})
-                # Store per-share price in GBP for GBX normalisation
+                # Store per-share price in GBP (Price × FXRate) for GBX normalisation
                 price_str = row.get('Price', '').strip()
+                fx_str    = row.get('FXRate', '1').strip()
                 if price_str and price_str != '0':
-                    stored_prices[ticker] = float(price_str)
+                    fx = float(fx_str) if fx_str else 1.0
+                    stored_prices[ticker] = float(price_str) * fx   # GBP per share
             elif action == 'SELL' and ticker:
                 tickers.add(ticker)
                 trades.append({'date': date, 'ticker': ticker, 'action': 'SELL', 'qty': qty, 'gbp': abs(gbp)})
