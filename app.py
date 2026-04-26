@@ -284,9 +284,8 @@ def _irish_performance():
                 tickers.add(ticker)
                 trades.append({'date': date, 'ticker': ticker, 'action': 'BUY', 'qty': qty, 'gbp': abs(gbp)})
                 # Store per-share cost in GBP for GBX normalisation
-                # Price = cost per share in GBP (already converted from statement)
-                # Currency = original trade currency (for reference)
-                # FXRate = GBP conversion rate (applied to Price to get GBP cost/share)
+                # Price = raw statement price in native currency (cents/pence)
+                # GBP/share = (Price / 100) × FXRate
                 price_str = row.get('Price', '').strip()
                 currency  = row.get('Currency', '').strip().upper()
                 fx_str    = row.get('FXRate', '1').strip()
@@ -296,8 +295,8 @@ def _irish_performance():
                     if currency == 'GBP':
                         stored_prices[ticker] = raw * fx
                     else:
-                        # USD / GBX: Price is in original currency (dollars or pence), apply FX
-                        stored_prices[ticker] = raw * fx   # Price × FXRate = GBP per share
+                        # USD / GBX: divide by 100 (cents/pence), then apply FX to get GBP
+                        stored_prices[ticker] = (raw / 100) * fx
             elif action == 'SELL' and ticker:
                 tickers.add(ticker)
                 trades.append({'date': date, 'ticker': ticker, 'action': 'SELL', 'qty': qty, 'gbp': abs(gbp)})
@@ -308,21 +307,25 @@ def _irish_performance():
     trades.sort(key=lambda x: x['date'])
     cash_flows.sort(key=lambda x: x['date'])
     tickers = sorted(tickers)
-    start_date = trades[0]['date']
+    start_date = cash_flows[0]['date'] if cash_flows else trades[0]['date']
     end_date   = datetime.now().strftime('%Y-%m-%d')
 
-    # ── 2. Fetch historical prices (weekly) ─────────────────────────────────
+    # ── 2. Load daily prices — always check cache first, fetch+cache if miss ─
     price_data = {}
     for tk in tickers:
         try:
-            adj = yf.Ticker(tk).history(start=start_date, end=end_date, interval="1wk", auto_adjust=True)
-            for ts, row in adj.iterrows():
-                ds = str(ts.date())
-                price_data.setdefault(tk, {})[ds] = float(row['Close'])
+            df = fetch_and_cache(tk, 'daily', start=start_date, end=end_date)
+            if df is not None and not df.empty:
+                if 'close' in df.columns:
+                    df = df.rename(columns={'close': 'Close'})
+                for ts, row in df.iterrows():
+                    ds = str(ts.date())
+                    if start_date <= ds <= end_date:
+                        price_data.setdefault(tk, {})[ds] = float(row['Close'])
         except Exception:
             pass
 
-    # ── 3. Build weekly curve ───────────────────────────────────────────────
+    # ── 3. Build daily curve ───────────────────────────────────────────────────
     positions  = defaultdict(lambda: {'qty': 0, 'cost_gbp': 0.0})
     divs_received = 0.0
     net_invested  = 0.0
@@ -331,15 +334,13 @@ def _irish_performance():
     trade_idx  = 0
     cash_idx   = 0
 
-    cursor = datetime.strptime(min(trades[0]['date'] for t in trades), '%Y-%m-%d')
+    cursor = datetime.strptime(start_date, '%Y-%m-%d')
     end    = datetime.strptime(end_date, '%Y-%m-%d')
-    while cursor.weekday() != 4:
-        cursor += timedelta(days=1)
 
     while cursor <= end:
-        week_end = cursor.strftime('%Y-%m-%d')
+        day = cursor.strftime('%Y-%m-%d')
 
-        while trade_idx < len(trades) and trades[trade_idx]['date'] <= week_end:
+        while trade_idx < len(trades) and trades[trade_idx]['date'] <= day:
             tr = trades[trade_idx]
             trade_idx += 1
             if tr['action'] == 'BUY':
@@ -358,18 +359,18 @@ def _irish_performance():
                 divs_received += tr['gbp']
                 account_cash  += tr['gbp']
 
-        while cash_idx < len(cash_flows) and cash_flows[cash_idx]['date'] <= week_end:
+        while cash_idx < len(cash_flows) and cash_flows[cash_idx]['date'] <= day:
             net_invested += cash_flows[cash_idx]['gbp']
             account_cash  += cash_flows[cash_idx]['gbp']
             cash_idx += 1
 
-        # Portfolio value at week-end
+        # Portfolio value at day-end
         total_value = 0.0
         for tk, pos in positions.items():
             if pos['qty'] > 0:
                 prices = price_data.get(tk, {})
                 if prices:
-                    past = sorted((d for d in prices if d <= week_end), reverse=True)
+                    past = sorted((d for d in prices if d <= day), reverse=True)
                     if past:
                         cur_price = prices[past[0]]
                         # GBX stocks (price in pence) need /100 to convert to GBP
@@ -379,15 +380,20 @@ def _irish_performance():
                         total_value += pos['qty'] * cur_price
 
         ret = (total_value + account_cash) / net_invested if net_invested > 0 else 0
-        curve.append({
-            'date':   week_end,
-            'return': round(ret, 4),
-            'value':  round(total_value + account_cash, 2),
-        })
+        # Only append on weekdays (markets closed on weekends)
+        if cursor.weekday() < 5:
+            curve.append({
+                'date':   day,
+                'return': round(ret, 4),
+                'value':  round(total_value + account_cash, 2),
+            })
 
-        cursor += timedelta(days=7)
+        cursor += timedelta(days=1)
 
     # ── 4. Override last point with portfolio JSON ───────────────────────────
+    # Irish: daily cached prices are already accurate closing prices — skip override
+    # Ignite: override replaces last weekly point with accurate current values
+    # (checked via PORT_PATH since key is not in scope here)
     try:
         with open(PORT_PATH) as f:
             port = _json.load(f)
@@ -396,7 +402,8 @@ def _irish_performance():
         cur_cash   = port['account'].get('cash_gbp', 0) or 0
         last_date  = curve[-1]['date'] if curve else end_date
         cur_net_inv = sum(cf['gbp'] for cf in cash_flows if cf['date'] <= last_date)
-        if curve:
+        # Only override for Ignite (has its own path); Irish has accurate daily prices
+        if curve and 'ignite' in PORT_PATH:
             curve[-1]['return'] = round((cur_equity + cur_cash) / cur_net_inv, 4) if cur_net_inv > 0 else 0
             curve[-1]['value']   = round(cur_equity + cur_cash, 2)
     except Exception:
@@ -496,21 +503,23 @@ def api_portfolio_performance():
     start_date = trades[0]['date']
     end_date   = datetime.now().strftime('%Y-%m-%d')
 
-    # ── 3. Fetch historical prices for all tickers ────────────────────────────
+    # ── 3. Fetch daily prices for all tickers — always check cache first, fetch+cache if miss ─
     tickers = sorted(set(t['ticker'] for t in trades))
     price_data = {}   # ticker -> {date_str -> usd_close}
     for tk in tickers:
         try:
-            # Use daily data for accurate weekly curve sampling
-            adj = yf.Ticker(tk).history(start=start_date, end=end_date, interval="1wk", auto_adjust=True)
-            for ts, row in adj.iterrows():
-                ds = str(ts.date())
-                price_data.setdefault(tk, {})[ds] = float(row['Close'])
+            df = fetch_and_cache(tk, 'daily', start=start_date, end=end_date)
+            if df is not None and not df.empty:
+                if 'close' in df.columns:
+                    df = df.rename(columns={'close': 'Close'})
+                for ts, row in df.iterrows():
+                    ds = str(ts.date())
+                    if start_date <= ds <= end_date:
+                        price_data.setdefault(tk, {})[ds] = float(row['Close'])
         except Exception:
             pass
 
-    # ── 4. Build weekly equity curve ────────────────────────────────────────
-    # Use week-ending dates (Fridays) as the sampling points
+    # ── 4. Build daily equity curve ──────────────────────────────────────────
     from datetime import datetime
     dates = sorted(set(t['date'] for t in trades))
 
@@ -523,18 +532,15 @@ def api_portfolio_performance():
     trade_idx  = 0
     cash_idx   = 0
 
-    # Sample every Friday from start to end
+    # Sample daily from start to end
     cursor = datetime.strptime(min(dates), '%Y-%m-%d')
     end    = datetime.strptime(end_date, '%Y-%m-%d')
-    # Find next Friday
-    while cursor.weekday() != 4:
-        cursor += timedelta(days=1)
 
     while cursor <= end:
-        week_end = cursor.strftime('%Y-%m-%d')
+        day = cursor.strftime('%Y-%m-%d')
 
-        # Apply all trades up to and including this week
-        while trade_idx < len(trades) and trades[trade_idx]['date'] <= week_end:
+        # Apply all trades up to and including this day
+        while trade_idx < len(trades) and trades[trade_idx]['date'] <= day:
             tr = trades[trade_idx]
             trade_idx += 1
             if tr['action'] == 'BUY':
@@ -554,34 +560,36 @@ def api_portfolio_performance():
                 divs_received += tr['gbp']
                 account_cash += tr['gbp']   # dividend adds to cash
 
-        # Apply cash flows (card payments + FX) up to this week
-        while cash_idx < len(cash_flows) and cash_flows[cash_idx]['date'] <= week_end:
+        # Apply cash flows (card payments + FX) up to this day
+        while cash_idx < len(cash_flows) and cash_flows[cash_idx]['date'] <= day:
             net_invested += cash_flows[cash_idx]['gbp']
             account_cash  += cash_flows[cash_idx]['gbp']
             cash_idx += 1
 
-        # Portfolio value at this week-end using historical prices
+        # Portfolio value at this day using historical prices
         total_value = 0.0
         for tk, pos in positions.items():
             if pos['qty'] > 0:
                 prices = price_data.get(tk, {})
                 if prices:
-                    past = sorted((d for d in prices if d <= week_end), reverse=True)
+                    past = sorted((d for d in prices if d <= day), reverse=True)
                     if past:
                         total_value += positions[tk]['qty'] * prices[past[0]] / RATE
 
-        # Cash in the account at this week-end (card deposits accumulated, net of trades)
+        # Cash in the account at this day-end (card deposits accumulated, net of trades)
         # cash = net_invested - sum of all BUY costs (since card deposits go to cash, trades deduct from it)
         account_cash = net_invested - sum(p['cost_gbp'] for p in positions.values())
         # Return = (holdings value + cash + divs) / net invested
         ret = (total_value + account_cash + divs_received) / net_invested if net_invested > 0 else 0
-        curve.append({
-            'date':   week_end,
-            'return': round(ret, 4),
-            'value':  round(total_value + account_cash + divs_received, 2),
-        })
+        # Only append on weekdays (markets closed on weekends)
+        if cursor.weekday() < 5:
+            curve.append({
+                'date':   day,
+                'return': round(ret, 4),
+                'value':  round(total_value + account_cash + divs_received, 2),
+            })
 
-        cursor += timedelta(days=7)
+        cursor += timedelta(days=1)
 
     # ── 5. Override last point with accurate IG portfolio JSON values ─
     try:
