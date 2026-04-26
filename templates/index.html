@@ -155,6 +155,129 @@
   ::-webkit-scrollbar { width: 5px; height: 5px; }
   ::-webkit-scrollbar-track { background: transparent; }
   ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+  /* ── Portfolio Modal ── */
+  #portfolio-modal {
+    display: none;           /* shown by JS */
+    position: fixed; inset: 0;
+    background: rgba(0,0,0,0.75);
+    z-index: 1000;
+    align-items: center; justify-content: center;
+  }
+  #portfolio-modal.open { display: flex; }
+  #portfolio-modal.maximised {
+    background: var(--bg);
+    flex-direction: column;
+  }
+  #portfolio-modal.maximised #portfolio-chart-area {
+    flex: 1; min-height: 0;
+  }
+  #portfolio-modal.maximised #portfolio-modal-body {
+    flex: 1; display: flex; flex-direction: column; min-height: 0;
+    border-radius: 0; margin: 0; max-width: 100%; max-height: 100%;
+  }
+  #portfolio-modal.maximised .modal-chart-area { flex: 1; min-height: 0; }
+  #portfolio-modal.maximised .modal-holdings { flex: 1; overflow-y: auto; }
+
+  #portfolio-modal-body {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    width: 520px; max-height: 80vh;
+    display: flex; flex-direction: column;
+    overflow: hidden;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.6);
+  }
+  .modal-header {
+    display: flex; align-items: center; gap: 8px;
+    padding: 12px 14px;
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+  .modal-tabs { display: flex; gap: 4px; flex: 1; }
+  .modal-tab {
+    background: none; border: 1px solid var(--border);
+    color: var(--muted); font-size: 12px; font-weight: 600;
+    padding: 4px 12px; border-radius: 5px; cursor: pointer;
+  }
+  .modal-tab.active { background: var(--accent); color: #000; border-color: var(--accent); }
+  .modal-tab:hover:not(.active) { border-color: var(--accent); color: var(--text); }
+  .modal-header-actions { display: flex; gap: 6px; }
+  .modal-btn {
+    background: none; border: 1px solid var(--border);
+    color: var(--muted); font-size: 14px; padding: 3px 8px;
+    border-radius: 4px; cursor: pointer; line-height: 1;
+  }
+  .modal-btn:hover { border-color: var(--accent); color: var(--accent); }
+  .modal-chart-area {
+    padding: 12px 14px 6px;
+    flex-shrink: 0;
+  }
+  #portfolio-donut { width: 100%; height: 240px; }
+  .modal-holdings {
+    flex: 1; overflow-y: auto;
+    padding: 6px 14px 12px;
+  }
+  .modal-section-title {
+    font-size: 10px; font-weight: 700; letter-spacing: 0.07em;
+    text-transform: uppercase; color: var(--muted);
+    margin: 8px 0 4px; border-bottom: 1px solid var(--border); padding-bottom: 2px;
+  }
+  .holdings-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  .holdings-table th {
+    text-align: left; font-size: 10px; font-weight: 700;
+    text-transform: uppercase; letter-spacing: 0.05em;
+    color: var(--muted); padding: 3px 6px;
+    border-bottom: 1px solid var(--border);
+  }
+  .holdings-table th:last-child,
+  .holdings-table td:last-child { text-align: right; }
+  .holdings-table td { padding: 4px 6px; border-bottom: 1px solid var(--border2); }
+  .holdings-table tr:last-child td { border-bottom: none; }
+  .ticker-cell { font-weight: 700; color: var(--accent); }
+  .val-cell { color: var(--text); font-variant-numeric: tabular-nums; }
+  .gain-pos { color: var(--green); }
+  .gain-neg { color: var(--red); }
+  .as-of { font-size: 10px; color: var(--muted); margin-left: auto; padding-right: 4px; }
+  .modal-footer {
+    padding: 8px 14px;
+    border-top: 1px solid var(--border);
+    display: flex; align-items: center; gap: 8px;
+    flex-shrink: 0;
+  }
+  .footer-note { font-size: 11px; color: var(--muted); flex: 1; }
+
+
+  /* ── Performance Modal ── */
+  #perf-modal {
+    display: none; position: fixed; inset: 0;
+    background: rgba(0,0,0,0.75); z-index: 1000;
+    align-items: center; justify-content: center;
+  }
+  #perf-modal.open { display: flex; }
+  #perf-modal-body {
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: 10px; width: 720px; max-height: 85vh;
+    display: flex; flex-direction: column; overflow: hidden;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.6);
+  }
+  .perf-header {
+    display: flex; align-items: center; gap: 8px;
+    padding: 12px 14px; border-bottom: 1px solid var(--border); flex-shrink: 0;
+  }
+  .perf-title { font-weight: 700; font-size: 14px; color: var(--accent); flex: 1; }
+  .perf-chart-area { padding: 10px 14px 4px; flex-shrink: 0; min-height: 0; }
+  #perf-chart { width: 100%; height: 320px; }
+  .perf-stats {
+    display: flex; gap: 24px; padding: 8px 14px 12px; flex-wrap: wrap;
+  }
+  .perf-stat { text-align: center; }
+  .perf-stat-val { font-size: 16px; font-weight: 700; color: var(--text); }
+  .perf-stat-val.pos { color: var(--green); }
+  .perf-stat-val.neg { color: var(--red); }
+  .perf-stat-lbl { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; }
+  .perf-footer { padding: 8px 14px; border-top: 1px solid var(--border); font-size: 11px; color: var(--muted); flex-shrink: 0; }
+
 </style>
 </head>
 <body>
@@ -163,12 +286,14 @@
 <div class="topbar">
   <button id="sidebar-toggle" title="Toggle sidebar">☰</button>
   <div class="logo">⚡ Romhongbus</div>
-  <div class="portfolio-group">
+  <div class="portfolio-group" style="display:flex;align-items:center;gap:5px;">
     <select id="portfolio-select">
       <option value="">— Portfolio —</option>
       <option value="irish">Irish</option>
       <option value="ignite">Ignite</option>
     </select>
+    <button id="portfolio-alloc-btn" title="Show allocation" style="background:var(--panel2);border:1px solid var(--border);color:var(--muted);font-size:12px;padding:3px 9px;border-radius:4px;cursor:pointer;">%</button>
+    <button id="portfolio-perf-btn" title="Show performance" style="background:var(--panel2);border:1px solid var(--border);color:var(--muted);font-size:12px;padding:3px 9px;border-radius:4px;cursor:pointer; font-weight:700;">R</button>
     <span id="portfolio-info" style="font-size:11px;color:var(--muted);max-width:200px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"></span>
   </div>
   <div class="ticker-input-group">
@@ -251,7 +376,7 @@
 </div>
 
 <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
-<script data-ts="1777149191">
+<script data-ts="1777155544">
 // ── State ──────────────────────────────────────────────────────────────────
 let currentData   = null;
 let activeTf      = 'daily';
@@ -776,37 +901,312 @@ fetch('/api/watchlist').then(r => r.json()).then(buildSidebar).catch(() => {
 });
 
 // ── Portfolio selector ─────────────────────────────────────────────────────
-document.getElementById('portfolio-select').addEventListener('change', function() {
-  const key = this.value;
-  if (!key) {
-    portfolioData = null;
-    document.getElementById('portfolio-info').textContent = '';
-    // Restore full watchlist sidebar
-    if (watchlistData) renderSidebar(watchlistData);
-    if (currentData) renderChart(currentData, false);
-    setTimeout(resizeChart, 250);
-    return;
+// ── Portfolio Modal State ─────────────────────────────────────────────────────
+let portfolioCache   = null;   // raw /api/portfolios response
+
+let isPortfolioMaximised = false;
+
+function openPortfolioModal(initialTab) {
+  // Fetch if not cached
+  var doRender = function(data) {
+    portfolioCache = data;
+    renderPortfolioModal();
+    document.getElementById('portfolio-modal').classList.add('open');
+    isPortfolioMaximised = false;
+    document.getElementById('modal-maximise-btn').textContent = '↗';
+  };
+
+  if (portfolioCache) {
+    doRender(portfolioCache);
+  } else {
+    fetch('/api/portfolios')
+      .then(r => r.json())
+      .then(doRender)
+      .catch(e => console.error('Portfolio modal error:', e));
   }
-  fetch('/api/portfolios')
-    .then(r => r.json())
-    .then(data => {
-      portfolioData = data[key] || null;
-      if (!portfolioData) return;
-      const h = portfolioData.holdings || [];
-      var infoEl = document.getElementById('portfolio-info');
-      if (infoEl) {
-        infoEl.textContent = portfolioData.name + ' · ' + h.length + ' holdings';
+}
+
+function renderPortfolioModal() {
+  // Always show the currently selected portfolio (from dropdown)
+  var tab = document.getElementById('portfolio-select').value || 'irish';
+
+  var data = portfolioCache && portfolioCache[tab];
+  if (!data) return;
+
+  // Update as-of and portfolio name
+  var asOfEl = document.getElementById('modal-as-of');
+  if (asOfEl) asOfEl.textContent = (data.name || tab) + (data.as_of ? (' · as of ' + data.as_of) : '');
+
+  var h = data.holdings || [];
+
+  // ── Donut chart ──────────────────────────────────────────────────────────
+  // Determine which portfolio is currently selected
+  var selectedTab = document.getElementById('portfolio-select').value || 'irish';
+  // Value field: ignite uses cur_val_gbp, irish uses value_gbp
+  var valKey  = selectedTab === 'ignite' ? 'cur_val_gbp' : 'value_gbp';
+  var gainKey = selectedTab === 'ignite' ? 'pnl_gbp' : 'gain_gbp';
+  var qtyKey  = selectedTab === 'ignite' ? 'qty' : 'qty';
+
+  var tickers = h.map(function(x) { return x.ticker; });
+  var values  = h.map(function(x) { return Math.abs(x[valKey] || 0); });
+  var cashGbp = data.cash_gbp || 0;
+  var total   = values.reduce(function(s, v) { return s + v; }, 0) + cashGbp;
+
+  // Add cash as a separate slice
+  if (cashGbp > 0) {
+    tickers.push('Cash');
+    values.push(cashGbp);
+  }
+
+  // Colour palette for donut segments
+  var palette = ['#00ccaa','#ff9900','#4488ff','#ff4444','#aa88ff','#00aaff','#ffcc00','#ff6699','#66ffcc','#cc88ff'];
+  var colors  = tickers.map(function(_, i) { return palette[i % palette.length]; });
+
+  var donutData = [{
+    type: 'pie',
+    labels: tickers,
+    values: values,
+    hole: 0.55,
+    textinfo: 'label+percent',
+    textposition: 'outside',
+    automargin: true,
+    marker: { colors: colors },
+    sort: false,
+    hoverinfo: 'label+value+percent',
+  }];
+
+  var annotText = total > 0
+    ? ('£' + total.toLocaleString('en-GB', { minimumFractionDigits: 0, maximumFractionDigits: 0 }))
+    : '';
+
+  var donutLayout = {
+    showlegend: false,
+    margin: { t: 10, b: 10, l: 10, r: 10 },
+    paper_bgcolor: 'transparent',
+    plot_bgcolor: 'transparent',
+    font: { color: '#e0e0e0', size: 12 },
+    annotations: total > 0 ? [{
+      text: annotText + '<br><span style="font-size:10px;color:#666">total</span>',
+      x: 0.5, y: 0.5,
+      showarrow: false,
+      font: { color: '#e0e0e0', size: 13 },
+      align: 'center',
+      valign: 'middle',
+    }] : [],
+  };
+
+  Plotly.react('portfolio-donut', donutData, donutLayout, {
+    responsive: true,
+    displayModeBar: false,
+    displaylogo: false,
+  });
+
+  // ── Holdings table ────────────────────────────────────────────────────────
+  var tbody = document.getElementById('holdings-body');
+  var rows = '';
+
+  // Holdings rows
+  h.forEach(function(x) {
+    var val  = x[valKey]  || 0;
+    var gain = x[gainKey] || 0;
+    var gainClass = gain >= 0 ? 'gain-pos' : 'gain-neg';
+    var gainStr  = (gain >= 0 ? '+' : '−') + '£' + Math.abs(gain).toFixed(2);
+    var valStr   = '£' + Math.abs(val).toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    var qtyStr   = x[qtyKey] != null ? x[qtyKey].toString() : '—';
+    rows += '<tr>' +
+      '<td class="ticker-cell">' + x.ticker + '</td>' +
+      '<td class="val-cell">' + qtyStr + '</td>' +
+      '<td class="val-cell">' + valStr + '</td>' +
+      '<td class="' + gainClass + '">' + gainStr + '</td>' +
+      '</tr>';
+  });
+
+  // Cash row
+  if (cashGbp > 0) {
+    var cashStr = '£' + cashGbp.toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    rows += '<tr style="border-top:2px solid var(--border);">' +
+      '<td class="ticker-cell" style="color:var(--muted)">Cash</td>' +
+      '<td class="val-cell">—</td>' +
+      '<td class="val-cell">' + cashStr + '</td>' +
+      '<td class="gain-pos">—</td>' +
+      '</tr>';
+  }
+
+  tbody.innerHTML = rows;
+}
+
+// ── Modal event bindings (run after DOM is ready) ─────────────────────────
+window.addEventListener('DOMContentLoaded', function() {
+
+// Close button
+  document.getElementById('modal-close-btn').addEventListener('click', function() {
+    document.getElementById('portfolio-modal').classList.remove('open');
+  });
+
+  // Maximise / restore
+  document.getElementById('modal-maximise-btn').addEventListener('click', function() {
+    isPortfolioMaximised = !isPortfolioMaximised;
+    document.getElementById('portfolio-modal').classList.toggle('maximised', isPortfolioMaximised);
+    this.textContent = isPortfolioMaximised ? '↙' : '↗';
+    setTimeout(function() { Plotly.relayout('portfolio-donut', { autosize: true }); }, 50);
+  });
+
+  // Click outside modal body to close
+  document.getElementById('portfolio-modal').addEventListener('click', function(e) {
+    if (e.target === this) {
+      this.classList.remove('open');
+    }
+  });
+
+  // Portfolio dropdown — opens modal on selected portfolio tab
+  
+// ── Performance Modal ─────────────────────────────────────────────────────────
+function openPerfModal(key) {
+  var modal = document.getElementById('perf-modal');
+  modal.classList.add('open');
+
+  var title = document.getElementById('perf-title');
+  title.textContent = (key === 'ignite' ? 'Ignite' : 'Irish') + ' Performance';
+
+  document.getElementById('perf-stats').innerHTML = '<div style="color:var(--muted);font-size:12px;padding:20px 0;">Loading…</div>';
+  document.getElementById('perf-chart').innerHTML = '';
+  document.getElementById('perf-footer').textContent = '';
+
+  fetch('/api/portfolio/performance?key=' + encodeURIComponent(key))
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      if (data.error) {
+        document.getElementById('perf-stats').innerHTML =
+          '<div style="color:var(--red);font-size:12px;padding:20px 0;">' + data.error + '</div>';
+        return;
       }
-      // Replace sidebar with only portfolio tickers
-      const portSections = { primary: h.map(x => x.ticker), secondary: [], index: [], alternative: [], sector: [] };
-      renderSidebar(portSections);
-      // Delay loadChart until after sidebar transition completes
-      setTimeout(() => {
-        loadChart();
-        setTimeout(resizeChart, 250);
-      }, 220);
+      renderPerfModal(data);
     })
-    .catch(e => { console.error('Portfolio load error:', e); portfolioData = null; });
+    .catch(function(e) {
+      document.getElementById('perf-stats').innerHTML =
+        '<div style="color:var(--red);font-size:12px;padding:20px 0;">Error: ' + e.message + '</div>';
+    });
+}
+
+function renderPerfModal(data) {
+  var curve = data.curve || [];
+  if (!curve.length) return;
+
+  var dates  = curve.map(function(c) { return c.date; });
+  var values = curve.map(function(c) { return c.value; });
+
+  // Trace 1: portfolio value
+  var traceVal = {
+    type: 'scatter',
+    x: dates, y: values,
+    mode: 'lines', name: 'Value',
+    line: { color: '#00ccaa', width: 2 },
+    fill: 'tonexty', fillcolor: 'rgba(0,204,170,0.08)',
+    hoverinfo: 'x+y',
+  };
+
+  var layout = {
+    paper_bgcolor: 'transparent', plot_bgcolor: 'transparent',
+    font: { color: '#e0e0e0', size: 12 },
+    xaxis: {
+      gridcolor: '#222', linecolor: '#333', mirror: true,
+      tickfont: { color: '#888', size: 10 },
+      type: 'date',
+    },
+    yaxis: {
+      gridcolor: '#222', linecolor: '#333', mirror: true,
+      tickfont: { color: '#888', size: 10 },
+      tickprefix: '£', hoverformat: ',.0f',
+      type: 'log', domain: [0, 1],
+    },
+    legend: { orientation: 'h', x: 0.5, xanchor: 'center', y: 1.02 },
+    margin: { t: 10, b: 40, l: 60, r: 20 },
+    showlegend: true,
+  };
+
+  Plotly.newPlot('perf-chart', [traceVal], layout, {
+    responsive: true, displayModeBar: false, displaylogo: false,
+  });
+
+  // Stats
+  var first = values[0];
+  var last  = values[values.length - 1];
+  var peak  = Math.max.apply(null, values);
+  var trough= Math.min.apply(null, values);
+  var gain  = last - first;
+  var retPct= first > 0 ? ((last - first) / first * 100) : 0;
+  var maxDD = first > 0 ? ((trough - peak) / peak * 100) : 0;
+
+  var posNeg = function(v) { return v >= 0 ? 'pos' : 'neg'; };
+  var fmtGbp = function(v) { return '£' + Math.abs(v).toLocaleString('en-GB', {minimumFractionDigits:0,maximumFractionDigits:0}); };
+  var fmtPct = function(v) { return (v >= 0 ? '+' : '−') + Math.abs(v).toFixed(1) + '%'; };
+
+  document.getElementById('perf-stats').innerHTML =
+    '<div class="perf-stat"><div class="perf-stat-val">' + fmtGbp(last) + '</div><div class="perf-stat-lbl">Value</div></div>' +
+    '<div class="perf-stat"><div class="perf-stat-val ' + posNeg(gain) + '">' + fmtPct(retPct) + '</div><div class="perf-stat-lbl">Total Return</div></div>' +
+    '<div class="perf-stat"><div class="perf-stat-val neg">' + fmtPct(maxDD) + '</div><div class="perf-stat-lbl">Max Drawdown</div></div>' +
+    '<div class="perf-stat"><div class="perf-stat-val">' + fmtGbp(last - first) + '</div><div class="perf-stat-lbl">P&amp;L</div></div>';
+
+  document.getElementById('perf-footer').textContent =
+    'Ignite portfolio · since ' + data.start + ' · ' + data.tickers.join(', ');
+}
+
+// Portfolio Performance button — opens equity curve modal
+  document.getElementById('portfolio-perf-btn').addEventListener('click', function() {
+    var key = document.getElementById('portfolio-select').value || '';
+    if (!key) {
+      alert('Select a portfolio first (Irish or Ignite)');
+      return;
+    }
+    openPerfModal(key);
+  });
+
+  // Performance modal close
+  document.getElementById('perf-close-btn').addEventListener('click', function() {
+    document.getElementById('perf-modal').classList.remove('open');
+  });
+
+  // Click outside to close
+  document.getElementById('perf-modal').addEventListener('click', function(e) {
+    if (e.target === this) this.classList.remove('open');
+  });
+
+  // Portfolio dropdown — update sidebar with all historical tickers for selected portfolio
+  document.getElementById('portfolio-select').addEventListener('change', function() {
+    var key = this.value;
+    if (!key) {
+      portfolioData = null;
+      // Restore full watchlist sidebar
+      if (watchlistData) renderSidebar(watchlistData);
+      if (currentData) renderChart(currentData, false);
+      setTimeout(resizeChart, 250);
+      return;
+    }
+    // Load portfolio data and update sidebar with ALL tickers ever traded
+    fetch('/api/portfolios')
+      .then(r => r.json())
+      .then(function(data) {
+        portfolioData = data[key] || null;
+        if (!portfolioData) return;
+        var h = portfolioData.holdings || [];
+        // Use all_tickers (historical) not just current holdings for the sidebar
+        var allTickers = portfolioData.all_tickers || h.map(function(x) { return x.ticker; });
+        var portSections = { primary: allTickers, secondary: [], index: [], alternative: [], sector: [] };
+        renderSidebar(portSections);
+        // Also update the info text
+        var infoEl = document.getElementById('portfolio-info');
+        if (infoEl) infoEl.textContent = portfolioData.name + ' · ' + allTickers.length + ' tickers';
+        setTimeout(resizeChart, 250);
+      })
+      .catch(function(e) { console.error('Portfolio load error:', e); });
+  });
+
+  // Allocation button — opens modal on currently selected portfolio tab (or Irish)
+  document.getElementById('portfolio-alloc-btn').addEventListener('click', function() {
+    var key = document.getElementById('portfolio-select').value || 'irish';
+    openPortfolioModal(key);
+  });
+
 });
 
 // Trigger chart resize after DOM changes (sidebar toggle, portfolio switch)
@@ -984,5 +1384,54 @@ window.addEventListener('load', () => {
   loadChart();
 });
 </script>
+
+<!-- Portfolio Allocation Modal -->
+<div id="portfolio-modal">
+  <div id="portfolio-modal-body">
+    <div class="modal-header">
+  <span class="as-of" id="modal-as-of"></span>
+      <div class="modal-header-actions">
+        <button class="modal-btn" id="modal-maximise-btn" title="Maximise">↗</button>
+        <button class="modal-btn" id="modal-close-btn" title="Close">✕</button>
+      </div>
+    </div>
+    <div class="modal-chart-area">
+      <div id="portfolio-donut"></div>
+    </div>
+    <div class="modal-holdings">
+      <div class="modal-section-title">Holdings</div>
+      <table class="holdings-table">
+        <thead>
+          <tr>
+            <th>Ticker</th>
+            <th>Qty</th>
+            <th>Value</th>
+            <th>P&amp;L</th>
+          </tr>
+        </thead>
+        <tbody id="holdings-body">
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+
+<!-- Portfolio Performance Modal -->
+<div id="perf-modal">
+  <div id="perf-modal-body">
+    <div class="perf-header">
+      <span class="perf-title" id="perf-title">Ignite Performance</span>
+      <span style="flex:1"></span>
+      <button class="modal-btn" id="perf-close-btn" title="Close">✕</button>
+    </div>
+    <div class="perf-chart-area">
+      <div id="perf-chart"></div>
+    </div>
+    <div class="perf-stats" id="perf-stats"></div>
+    <div class="perf-footer" id="perf-footer"></div>
+  </div>
+</div>
+
 </body>
 </html>

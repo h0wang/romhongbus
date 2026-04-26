@@ -251,6 +251,196 @@ def chart_data_more():
 
 
 # ── Watchlist API ────────────────────────────────────────────────────────────
+
+# ── Portfolio Performance API ────────────────────────────────────────────────
+@app.route("/api/portfolio/performance")
+def api_portfolio_performance():
+    """
+    Returns equity curve for a portfolio as JSON.
+    Ignite: reconstructed from CSV transaction history + historical yfinance prices.
+    Irish: not supported (no transaction history available).
+    """
+    import csv, re
+    from collections import defaultdict
+    from datetime import datetime, timedelta
+
+    key = request.args.get("key", "").strip()
+    if key == "irish":
+        return jsonify({"error": "No transaction history available for Irish portfolio"}), 400
+
+    if key != "ignite":
+        return jsonify({"error": "Unknown portfolio: " + key}), 400
+
+    CSV_PATH = "/home/clawpi/.openclaw/media/inbound/TransactionHistory-WX3OA-_01-04-2012_-_24-04-2026---7e27c37b-f1b1-43c5-9133-21140ab11330.csv"
+    RATE = 1.3502  # USD/GBP
+
+    ALIASES = {
+        'BERKSHIRE HATHAWAY': 'BRK-B',
+        'MARKEL CORP':        'MKL',
+        'WALT DISNEY':        'DIS',
+        'ALIBABA GROUP':      'BABA',
+        'ALPHABET INC':       'GOOGL',
+        'ALPHABET':           'GOOGL',
+        'PDD HOLDINGS':       'PDD',
+        'PAYPAL':             'PYPL',
+        'SMITH & WESSON':     'SWBI',
+        'DIDI GLOBAL':        'DIDIY',   # switched to DIDIY after delisting
+        'ISHARES USD TREASURY':'IB01.L',
+    }
+
+    def ticker_of(mkt):
+        m = mkt.upper()
+        return next((t for name, t in ALIASES.items() if name in m), None)
+
+    # ── 1. Parse CSV trades ─────────────────────────────────────────────────
+    trades = []   # [{date, ticker, action, qty, price_usd, gbp}]
+    with open(CSV_PATH, newline='', encoding='utf-8') as f:
+        for row in csv.DictReader(f):
+            date   = row.get('DateUtc', '')[:10]
+            mkt    = row.get('MarketName', '')
+            summ   = row.get('Summary', '')
+            ctype  = row.get('Transaction type', '')
+            gbp    = float(row.get('PL Amount', '0').replace(',', '') or 0)
+
+            t = ticker_of(mkt)
+            if not t:
+                continue
+
+            m2 = re.search(r'CONS\s*(\d+)\s*@\s*([\d.]+)', mkt)
+            if m2:
+                qty   = int(m2.group(1))
+                price = float(m2.group(2))
+                if ctype == 'WITH':   # BUY
+                    trades.append({'date': date, 'ticker': t, 'action': 'BUY',  'qty': qty, 'price': price, 'gbp': abs(gbp)})
+                elif ctype == 'DEPO' and gbp < 0:  # SELL
+                    trades.append({'date': date, 'ticker': t, 'action': 'SELL', 'qty': qty, 'price': price, 'gbp': abs(gbp)})
+            elif 'DIVIDEND' in summ and ctype == 'DEPO' and gbp > 0:
+                trades.append({'date': date, 'ticker': t, 'action': 'DIV', 'qty': 0, 'price': 0, 'gbp': gbp})
+
+    trades.sort(key=lambda x: x['date'])
+
+    # ── 1b. Parse cash flows (card payments + FX transfers — for net invested) ──
+    cash_flows = []   # [{date, gbp}] — positive = cash in, negative = cash out
+    with open(CSV_PATH, newline='', encoding='utf-8') as f:
+        for row in csv.DictReader(f):
+            mkt  = row.get('MarketName', '')
+            gbp  = float(row.get('PL Amount', '0').replace(',', '') or 0)
+            date = row.get('DateUtc', '')[:10]
+            if 'Card payment' in mkt:
+                cash_flows.append({'date': date, 'gbp': gbp})   # positive = deposit
+            elif 'Transfer from GBP' in mkt:
+                cash_flows.append({'date': date, 'gbp': gbp})   # net FX (can be + or -)
+    cash_flows.sort(key=lambda x: x['date'])
+
+    # ── 2. Determine date range ───────────────────────────────────────────────
+    if not trades:
+        return jsonify({"error": "No trades found"}), 404
+    start_date = trades[0]['date']
+    end_date   = datetime.now().strftime('%Y-%m-%d')
+
+    # ── 3. Fetch historical prices for all tickers ────────────────────────────
+    tickers = sorted(set(t['ticker'] for t in trades))
+    price_data = {}   # ticker -> {date_str -> usd_close}
+    for tk in tickers:
+        try:
+            # Use daily data for accurate weekly curve sampling
+            adj = yf.Ticker(tk).history(start=start_date, end=end_date, interval="1wk", auto_adjust=True)
+            for ts, row in adj.iterrows():
+                ds = str(ts.date())
+                price_data.setdefault(tk, {})[ds] = float(row['Close'])
+        except Exception:
+            pass
+
+    # ── 4. Build weekly equity curve ────────────────────────────────────────
+    # Use week-ending dates (Fridays) as the sampling points
+    from datetime import datetime
+    dates = sorted(set(t['date'] for t in trades))
+
+    # Walk through chronologically, track positions, sample portfolio value weekly
+    positions = defaultdict(lambda: {'qty': 0, 'cost_gbp': 0.0})
+    divs_received = 0.0
+    net_invested  = 0.0   # cumulative cash in via card payments + FX
+    curve = []   # [{date, return, value}]
+    trade_idx  = 0
+    cash_idx   = 0
+
+    # Sample every Friday from start to end
+    cursor = datetime.strptime(min(dates), '%Y-%m-%d')
+    end    = datetime.strptime(end_date, '%Y-%m-%d')
+    # Find next Friday
+    while cursor.weekday() != 4:
+        cursor += timedelta(days=1)
+
+    while cursor <= end:
+        week_end = cursor.strftime('%Y-%m-%d')
+
+        # Apply all trades up to and including this week
+        while trade_idx < len(trades) and trades[trade_idx]['date'] <= week_end:
+            tr = trades[trade_idx]
+            trade_idx += 1
+            if tr['action'] == 'BUY':
+                positions[tr['ticker']]['qty']      += tr['qty']
+                positions[tr['ticker']]['cost_gbp'] += tr['gbp']
+            elif tr['action'] == 'SELL':
+                pos = positions[tr['ticker']]
+                if pos['qty'] > 0:
+                    avg = pos['cost_gbp'] / pos['qty']
+                    pos['qty']      -= min(tr['qty'], pos['qty'])
+                    pos['cost_gbp'] -= min(tr['qty'], pos['qty']) * avg
+            elif tr['action'] == 'DIV':
+                divs_received += tr['gbp']
+
+        # Apply cash flows (card payments + FX) up to this week
+        while cash_idx < len(cash_flows) and cash_flows[cash_idx]['date'] <= week_end:
+            net_invested += cash_flows[cash_idx]['gbp']
+            cash_idx += 1
+
+        # Portfolio value at this week-end using historical prices
+        total_value = 0.0
+        for tk, pos in positions.items():
+            if pos['qty'] > 0:
+                prices = price_data.get(tk, {})
+                if prices:
+                    past = sorted((d for d in prices if d <= week_end), reverse=True)
+                    if past:
+                        total_value += positions[tk]['qty'] * prices[past[0]] / RATE
+
+        # Return = (holdings value + divs) / cumulative net cash invested
+        # Excludes card payment impact from the denominator
+        ret = (total_value + divs_received) / net_invested if net_invested > 0 else 0
+        curve.append({
+            'date':   week_end,
+            'return': round(ret, 4),
+            'value':  round(total_value + divs_received, 2),
+        })
+
+        cursor += timedelta(days=7)
+
+    # ── 5. Override last point with accurate IG portfolio JSON values ─
+    try:
+        with open("/home/clawpi/.openclaw/data/portfolios/portfolio_ignite_latest.json") as f:
+            port = json.load(f)
+        holdings_now = {h["ticker"]: h for h in port.get("holdings", [])}
+        cur_equity   = sum(h.get("cur_val_gbp", 0) for h in holdings_now.values())
+        cur_divs     = port.get("total_divs_gbp", 0) or 0
+        # Recalculate cumulative net invested from all cash flows
+        last_date = curve[-1]["date"] if curve else end_date
+        cur_net_inv = sum(cf["gbp"] for cf in cash_flows if cf["date"] <= last_date)
+        if curve:
+            curve[-1]["return"] = round((cur_equity + cur_divs) / cur_net_inv, 4) if cur_net_inv > 0 else 0
+            curve[-1]["value"]   = round(cur_equity + cur_divs, 2)
+    except Exception:
+        pass
+
+    return jsonify({
+        "name":    "Ignite",
+        "start":   start_date,
+        "curve":   curve,
+        "tickers": tickers,
+    })
+
+
+
 WATCHLIST_PATH = "/home/clawpi/.openclaw/data/watchlist/watchlist.json"
 PORTFOLIO_DIR  = "/home/clawpi/.openclaw/data/portfolios"
 
@@ -275,10 +465,14 @@ def api_portfolios():
             if os.path.exists(path):
                 with open(path) as f:
                     data = json.load(f)
+                    # cash_gbp lives at top-level for Ignite, inside account for Irish
+                    cash_gbp = data.get("cash_gbp") or data.get("account", {}).get("cash_gbp") or 0
                     result[key] = {
-                        "name":     data.get("account", {}).get("platform", key.title()),
-                        "as_of":    data.get("date", ""),
-                        "holdings": data.get("holdings", []),
+                        "name":        data.get("account", {}).get("platform", key.title()),
+                        "as_of":       data.get("date", ""),
+                        "holdings":    data.get("holdings", []),
+                        "all_tickers": data.get("all_tickers", [x["ticker"] for x in data.get("holdings", [])]),
+                        "cash_gbp":    cash_gbp,
                     }
         return jsonify(result)
     except Exception as e:
